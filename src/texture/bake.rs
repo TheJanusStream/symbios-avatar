@@ -9,7 +9,9 @@
 //!
 //! Beside the buffer, for the crate's own painter, the bake measures how much
 //! skin each texel spans, along each of the atlas's axes: the footprint a
-//! painted beard's edge is feathered over (#432).
+//! painted beard's edge is feathered over (#432); and it marks which of the
+//! head's texels an attached part drew, an ear or a lid, which takes no painted
+//! hair (#471).
 //!
 //! Charts do not tile the atlas, so texels between them start empty. They are
 //! **dilated** outward afterwards, because a bilinear tap or a mip level near a
@@ -47,10 +49,12 @@ pub struct Texel {
 /// disc one texel across in the atlas covers on the skin there.
 ///
 /// **An ellipse, because the atlas is often coarse one way and fine the
-/// other.** Under the jaw and behind the cheek the head's chart steps four to
-/// eight millimetres a texel one way and one or two the other, so anything
-/// sized by the coarse step alone - a round disc as wide as the longest axis -
-/// reaches across a dozen fine texels the other way.
+/// other.** Under the jaw and behind the cheek the head's chart stepped four to
+/// eight millimetres a texel one way and one or two the other at #432, and
+/// behind the cheek and at the nape still steps three or four round the head
+/// and under one up it since #469, so anything sized by the coarse step alone -
+/// a round disc as wide as the longest axis - reaches across several fine
+/// texels the other way.
 ///
 /// **Not the step to a neighbouring texel**, which is what a painter could
 /// otherwise measure for itself: that step is a property of the atlas, and at a
@@ -104,7 +108,9 @@ const NOTHING: Footprint = Footprint {
 const TILE: usize = 16;
 
 /// The [`Footprint`]s of one bake, addressed by the index of a texel in
-/// [`AtlasGeometry::texels`], **kept for the head only** (#432).
+/// [`AtlasGeometry::texels`], **kept for the head only** (#432), and which of
+/// the head's texels an attached part drew rather than the head's own skin
+/// (#471).
 ///
 /// Only the head's texels are ever measured, so one footprint for every texel
 /// of the atlas was 24 MB at 1024 texels of which all but the head read
@@ -113,14 +119,32 @@ const TILE: usize = 16;
 /// atlas, so not even a grid over their bounds is small: the atlas is cut into
 /// tiles of [`TILE`] texels a side, and a tile is only kept once a footprint is
 /// written into it. A texel in a tile never written reads
-/// [`Footprint::default`], as it did.
+/// [`Footprint::default`], as it did, and the head's own skin.
+///
+/// **Which texels are a part's** rides here because it is wanted where the
+/// footprints are and nowhere else - on the head, by the painter - and because
+/// a [`Texel`] cannot carry it: its fields are all public, so one more would
+/// break any crate that writes one out. An ear is hung on the head, so its
+/// texels are the head's [`Zone`]; it lies beside the scalp and the sideburn,
+/// so a painter asking where hair grows by position alone paints both onto it.
+/// One bit a texel, a tile's 256 in four words: 32 bytes a kept tile beside its
+/// 6 KB of footprints.
 #[derive(Clone, Debug, Default, PartialEq)]
 pub(crate) struct Footprints {
     /// The atlas's width and height, in texels.
     atlas: [usize; 2],
-    /// The atlas's tiles, row-major: each one's footprints, row-major, once
-    /// one has been written into it.
-    tiles: Vec<Option<Box<[Footprint; TILE * TILE]>>>,
+    /// The atlas's tiles, row-major, each once something has been written into
+    /// it.
+    tiles: Vec<Option<Box<Tile>>>,
+}
+
+/// One tile of [`Footprints`], its texels row-major.
+#[derive(Clone, Debug, PartialEq)]
+struct Tile {
+    /// Each texel's footprint.
+    footprints: [Footprint; TILE * TILE],
+    /// Whether an attached part drew each texel, a bit each (#471).
+    parts: [u64; TILE * TILE / 64],
 }
 
 impl Footprints {
@@ -148,15 +172,39 @@ impl Footprints {
     /// nothing was written into.
     pub(crate) fn get(&self, index: usize) -> Option<&Footprint> {
         let (tile, at) = self.place(index)?;
-        self.tiles[tile].as_ref().map(|tile| &tile[at])
+        self.tiles[tile].as_ref().map(|tile| &tile.footprints[at])
     }
 
-    /// The footprint of texel `index` of the atlas, to write: its tile is
-    /// kept from here on.
-    fn get_mut(&mut self, index: usize) -> Option<&mut Footprint> {
-        let (tile, at) = self.place(index)?;
-        let tile = self.tiles[tile].get_or_insert_with(|| Box::new([NOTHING; TILE * TILE]));
-        Some(&mut tile[at])
+    /// Whether an attached part - an ear, a lid - drew texel `index` of the
+    /// atlas rather than the head's own skin (#471): `false` off the head.
+    pub(crate) fn on_a_part(&self, index: usize) -> bool {
+        self.place(index)
+            .and_then(|(tile, at)| {
+                let tile = self.tiles[tile].as_ref()?;
+                Some((tile.parts[at / 64] >> (at % 64)) & 1 == 1)
+            })
+            .unwrap_or(false)
+    }
+
+    /// Writes texel `index` of the atlas: its footprint, and whether a part
+    /// drew it. Its tile is kept from here on.
+    fn write(&mut self, index: usize, footprint: Footprint, part: bool) {
+        let Some((tile, at)) = self.place(index) else {
+            return;
+        };
+        let tile = self.tiles[tile].get_or_insert_with(|| {
+            Box::new(Tile {
+                footprints: [NOTHING; TILE * TILE],
+                parts: [0; TILE * TILE / 64],
+            })
+        });
+        tile.footprints[at] = footprint;
+        let bit = 1u64 << (at % 64);
+        if part {
+            tile.parts[at / 64] |= bit;
+        } else {
+            tile.parts[at / 64] &= !bit;
+        }
     }
 }
 
@@ -269,7 +317,8 @@ pub fn bake(
 
 /// [`bake`], and how much skin each texel spans beside it: one [`Footprint`] a
 /// texel, addressed like [`AtlasGeometry::texels`], carried across each
-/// triangle and out into the gutters with the texel it belongs to (#432).
+/// triangle and out into the gutters with the texel it belongs to (#432), and
+/// whether an attached part drew it (#471).
 ///
 /// **The head's texels only**, the one part of the body anything is feathered
 /// on (the painted beard); every other texel's footprint is left at nothing.
@@ -326,6 +375,7 @@ pub(crate) fn bake_measured(
                     &mut geometry,
                     &mut measured,
                     zone,
+                    false,
                     &Corners {
                         uvs: triangle.map(|v| uv.uvs[v as usize]),
                         positions: triangle.map(|v| positions[v as usize]),
@@ -383,6 +433,7 @@ fn draw_part(
                 geometry,
                 measured,
                 zone,
+                true,
                 &Corners {
                     uvs: triangle.map(|v| part.uvs[v as usize]),
                     positions: triangle.map(|v| part.positions[v as usize]),
@@ -491,9 +542,10 @@ fn outer(v: Vec3) -> Mat3 {
 /// The coarsest a face reads along either axis in [`spreads`], in metres a
 /// texel.
 ///
-/// The head's chart is at its coarsest under the jaw and behind the cheek, where
-/// a texel stands up to about eight millimetres from the next (#432); a face
-/// reading more than that is a sliver of the projection, not a texel of skin.
+/// The head's chart was at its coarsest under the jaw and behind the cheek, where
+/// a texel stood up to about eight millimetres from the next (#432), and since
+/// #469 is nowhere coarser than about six, over the scalp; a face reading more
+/// than eight is a sliver of the projection, not a texel of skin.
 ///
 /// Provenance: **measured** on seeds 175 and 237 (#432).
 const COARSEST: f32 = 0.008;
@@ -527,11 +579,12 @@ struct Corners {
 }
 
 /// Fills every texel a triangle covers or touches - see [`COVER`] - and the
-/// [`Footprint`] beside each.
+/// [`Footprint`] beside each, and whether an attached `part` drew it.
 fn rasterize(
     geometry: &mut AtlasGeometry,
     measured: &mut Footprints,
     zone: Zone,
+    part: bool,
     corners: &Corners,
 ) {
     let Corners {
@@ -600,12 +653,14 @@ fn rasterize(
                 mouth: mouths[0] * weights.x + mouths[1] * weights.y + mouths[2] * weights.z,
                 zone,
             });
-            if zone == Zone::Head
-                && let Some(footprint) = measured.get_mut(at)
-            {
-                *footprint = Footprint::of(
-                    spreads[0] * weights.x + spreads[1] * weights.y + spreads[2] * weights.z,
-                    normal,
+            if zone == Zone::Head {
+                measured.write(
+                    at,
+                    Footprint::of(
+                        spreads[0] * weights.x + spreads[1] * weights.y + spreads[2] * weights.z,
+                        normal,
+                    ),
+                    part,
                 );
             }
         }
@@ -617,7 +672,8 @@ fn edge(a: Vec2, b: Vec2, c: Vec2) -> f32 {
     (b.x - a.x) * (c.y - a.y) - (b.y - a.y) * (c.x - a.x)
 }
 
-/// Grows filled texels outward into the gutters, each with its [`Footprint`].
+/// Grows filled texels outward into the gutters, each with its [`Footprint`]
+/// and whether a part drew it.
 fn dilate(geometry: &mut AtlasGeometry, measured: &mut Footprints, passes: u32) {
     let (width, height) = (geometry.width as i64, geometry.height as i64);
 
@@ -647,10 +703,9 @@ fn dilate(geometry: &mut AtlasGeometry, measured: &mut Footprints, passes: u32) 
                 if let Some((texel, there)) = found {
                     geometry.texels[here] = Some(texel);
                     // Filled before this pass, so already what it ends as.
-                    if let Some(&footprint) = measured.get(there)
-                        && let Some(into) = measured.get_mut(here)
-                    {
-                        *into = footprint;
+                    if let Some(&footprint) = measured.get(there) {
+                        let part = measured.on_a_part(there);
+                        measured.write(here, footprint, part);
                     }
                     grew = true;
                 }
@@ -751,6 +806,7 @@ mod tests {
                     &mut bare,
                     &mut measured,
                     zone,
+                    false,
                     &Corners {
                         uvs: triangle.map(|v| uv.uvs[v as usize]),
                         positions: triangle.map(|v| positions[v as usize]),
@@ -784,7 +840,9 @@ mod tests {
         // way. Measured at #432 on the default head: 0.978 at the median, 0.959
         // where the atlas is twice as coarse one way as the other; a round
         // footprint as wide as the ellipse's long axis reads 0.900 and 0.764
-        // there, the fine way's steps a fraction of one.
+        // there, the fine way's steps a fraction of one. On #469's chart 0.977
+        // and 0.917 over 9,100 readings; 0.976 and 0.928 to 0.933 under a
+        // nudge of libm.
         let skeleton = HumanoidParams::default().skeleton(&crate::Composites::default());
         let cage = build_cage(&skeleton, &CageConfig::default()).expect("meshes");
         let mesh = catmull_clark(&cage, crate::BODY_SUBDIVISIONS);
@@ -794,7 +852,9 @@ mod tests {
         let size = 1024;
         let (geometry, measured) = bake_measured(&mesh, &uv, &[], &[], size);
         // Kept for the head only: measured at #432 on the default head, 410 of
-        // the atlas's 4096 tiles, 2.5 MB of footprints where one a texel was 24.
+        // the atlas's 4096 tiles, 2.5 MB of footprints where one a texel was 24;
+        // 396 on #469's chart, with which texels are a part's (#471) at 32
+        // bytes a tile beside them.
         let kept = measured.tiles.iter().flatten().count();
         assert!(
             kept * 8 <= measured.tiles.len(),

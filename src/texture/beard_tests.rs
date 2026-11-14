@@ -145,10 +145,10 @@ fn a_painted_beard_fades_over_texels_the_atlas_has() {
     // **The beard's edge went from bare skin to its whole density between one
     // texel and the next** (#432). The head is one chart wrapped round the
     // neck, so under the jaw and behind the cheek, where the skin turns to face
-    // along the wrap, a texel spans four to eight millimetres of skin, and a
-    // chin patch fading over five did its whole fade inside one: coarse,
-    // hard-edged patches under the chin and along the jaw on the issue's two
-    // rolls, seeds 175 and 237.
+    // along the wrap, a texel spanned four to eight millimetres of skin (two to
+    // four since #469), and a chin patch fading over five did its whole fade
+    // inside one: coarse, hard-edged patches under the chin and along the jaw
+    // on the issue's two rolls, seeds 175 and 237.
     //
     // Read on the built atlas, between every texel of the head and the next
     // one along each axis that is its neighbour on the skin as well - no
@@ -160,7 +160,9 @@ fn a_painted_beard_fades_over_texels_the_atlas_has() {
     // Measured at #432: seed 175 at most 0.992 before and 0.650 after, seed
     // 237 1.048 and 0.733; the thousandth-worst step 0.693 to 0.425 and 0.830 to
     // 0.511. What is left at the top is under the chin, where the head's chart
-    // folds and texels side by side stand five to ten millimetres apart.
+    // folds and texels side by side stand five to ten millimetres apart. On
+    // #469's chart, with the feather a tenth wider, 0.605 and 0.637, the
+    // thousandth-worst 0.374 and 0.413.
     for seed in [175, 237] {
         let rolled = Rolled::of(seed);
         let bare = rolled.shaved();
@@ -218,13 +220,16 @@ fn a_painted_beard_fades_over_texels_the_atlas_has() {
 /// `a_painted_beard_fades_over_texels_the_atlas_has`.
 ///
 /// Measured at #432: 0.650 and 0.733 on the two rolls, against 0.992 and 1.048
-/// before the feather; at most 0.669 and 0.736 under a nudge of libm.
+/// before the feather; at most 0.669 and 0.736 under a nudge of libm. On #469's
+/// chart, with the feather at 1.05, 0.617 and 0.661 but 0.792 under a nudge;
+/// at 1.15, 0.605 and 0.637, at most 0.697 and 0.764 under a nudge.
 const BEARD_STEP: f32 = 0.80;
 
 /// The same, for the thousandth-worst step.
 ///
 /// Measured at #432: 0.425 and 0.511, against 0.693 and 0.830 before; at most
-/// 0.425 and 0.526 under a nudge of libm.
+/// 0.425 and 0.526 under a nudge of libm. On #469's chart 0.374 and 0.413, at
+/// most 0.377 and 0.446 under a nudge.
 const BEARD_STEP_THOUSANDTH: f32 = 0.55;
 
 #[test]
@@ -300,7 +305,9 @@ fn a_feathered_beard_paints_no_halo_and_thins_no_edge() {
     // 270 and 339, 177 and 216; seed 237 0 and 557, 333 and 888, 254 and 828;
     // seed 4 0 and 2437, 446 and 2722, 301 and 2664; seed 5 0 and 1392, 387
     // and 1693, 213 and 1626; seed 7 0 and 451, 279 and 866, 196 and 769; seed
-    // 14 0 and 2430, 242 and 3116, 108 and 2920.
+    // 14 0 and 2430, 242 and 3116, 108 and 2920. On #469's chart, with the
+    // feather at 1.15: halo at most 169 more than the hard edge (seed 4) and
+    // thinned at most 320 more (seed 14), under every nudge of libm.
     for seed in [175, 237, 4, 5, 7, 14] {
         let rolled = Rolled::of(seed);
         let bare = rolled.repaint(None, true);
@@ -349,11 +356,11 @@ fn a_feathered_beard_paints_no_halo_and_thins_no_edge() {
 /// the masks' last hundredth its outer half reads as halo. Measured at #432:
 /// at most 301 (seed 4), and no more than that under any nudge of libm; the
 /// round disc painted 446 and 387 on seeds 4 and 5, so this is a bound it
-/// fails.
+/// fails. On #469's finer chart at most 181 (seed 4, under a nudge).
 const FEATHER_HALO: usize = 350;
 
 /// How many more thinned texels.
 ///
 /// Measured at #432: at most 490 more (seed 14), and no more under a nudge of
-/// libm; the round disc 686 more there.
+/// libm; the round disc 686 more there. On #469's chart at most 320 more.
 const FEATHER_THINNED: usize = 600;

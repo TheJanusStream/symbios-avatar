@@ -469,7 +469,9 @@ fn wrinkled(zone: Zone) -> bool {
 /// centre alone, because how much skin a texel spans is measured beside the
 /// atlas rather than in it, and [`crate::Avatar::build`] is what bakes and
 /// paints with that measure, feathering the edge over the texels the atlas has
-/// (#432).
+/// (#432). For the same reason painted hair here reaches an attached part
+/// charted with the head, an ear or a lid, by position as it reaches the skin
+/// beside it; the build tells the two apart and paints the parts bare (#471).
 #[must_use]
 pub fn paint_skin(
     geometry: &AtlasGeometry,
@@ -481,9 +483,107 @@ pub fn paint_skin(
     paint_skin_with(geometry, None, rig, params, condition, hair)
 }
 
+/// How far apart the texel at `index`, at `position`, and its neighbours lie
+/// on the body: the widest step to any of the four, which sees through a
+/// dilated texel's zero-distance clones to the real interior spacing.
+fn spacing_at(geometry: &AtlasGeometry, index: usize, position: Vec3) -> f32 {
+    let x = (index as u32) % geometry.width;
+    let y = (index as u32) / geometry.width;
+    let mut widest = 0.0f32;
+    for (dx, dy) in [(1i64, 0i64), (-1, 0), (0, 1), (0, -1)] {
+        let (nx, ny) = (i64::from(x) + dx, i64::from(y) + dy);
+        if nx < 0 || ny < 0 {
+            continue;
+        }
+        if let Some(near) = geometry.get(nx as u32, ny as u32) {
+            widest = widest.max((near.position - position).length());
+        }
+    }
+    widest
+}
+
+/// How much of a field of `cycles` a metre texels `spacing` apart can carry.
+fn resolvable_at(spacing: f32, cycles: f32) -> f32 {
+    if spacing > f32::EPSILON {
+        (1.0 / (2.0 * spacing * cycles)).clamp(0.0, 1.0)
+    } else {
+        1.0
+    }
+}
+
+/// The middling spacing of the texels the painted scalp covers: the median,
+/// over the head's own texels where the scalp's mask holds at least half, to
+/// within a step of its table, 2.7%.
+///
+/// **The finest the scalp's grain is drawn at** (#469's fixer). Every grain
+/// fades by how finely its texel is sampled, so that a grain the atlas cannot
+/// carry is not drawn as noise; but a person's head chart closes on its crown,
+/// whose last rings come out two to three times finer than the scalp below
+/// them, and there the stubble grain drew at full strength and at half or less
+/// everywhere else - from above, a disc of crisp speckle on a bald or shaved
+/// head. Faded no further than the scalp's middling texel allows, the crown's
+/// grain is the scalp's; the coarser half keeps its own, weaker fade. The
+/// brows and the beard keep theirs: no chart closes on them.
+///
+/// Counted into a fixed table of spacings rather than a list, so that a build
+/// allocates nothing for it; `0` where no texel is the scalp's.
+fn scalp_spacing(
+    geometry: &AtlasGeometry,
+    footprints: Option<&Footprints>,
+    hair: &PaintedLayer,
+) -> f32 {
+    let mut counts = [0u32; SCALP_SPACING_BINS];
+    let mut total = 0u32;
+    let span = (SCALP_SPACING_MOST / SCALP_SPACING_LEAST).ln();
+    for (index, sample) in geometry.texels.iter().enumerate() {
+        let Some(texel) = sample else { continue };
+        if texel.zone != Zone::Head
+            || footprints.is_some_and(|all| all.on_a_part(index))
+            || hair
+                .follicles
+                .weight_in_body(Follicle::Scalp, texel.position)
+                < 0.5
+        {
+            continue;
+        }
+        let spacing = spacing_at(geometry, index, texel.position);
+        if spacing <= f32::EPSILON {
+            continue;
+        }
+        let at = ((spacing / SCALP_SPACING_LEAST).ln() / span * SCALP_SPACING_BINS as f32)
+            .clamp(0.0, (SCALP_SPACING_BINS - 1) as f32) as usize;
+        counts[at] += 1;
+        total += 1;
+    }
+    let mut run = 0u32;
+    for (at, &count) in counts.iter().enumerate() {
+        run += count;
+        if total > 0 && 2 * run >= total {
+            let middle = (at as f32 + 0.5) / SCALP_SPACING_BINS as f32;
+            return SCALP_SPACING_LEAST * (span * middle).exp();
+        }
+    }
+    0.0
+}
+
+/// How many steps [`scalp_spacing`]'s table counts spacings in, evenly by ratio
+/// from [`SCALP_SPACING_LEAST`] to [`SCALP_SPACING_MOST`]. Provenance:
+/// **chosen**: each step 2.7% wider than the last.
+const SCALP_SPACING_BINS: usize = 256;
+
+/// The finest spacing [`scalp_spacing`] tells apart, in metres: a twentieth of
+/// a millimetre, a fortieth of the crown's finest. Provenance: **chosen**.
+const SCALP_SPACING_LEAST: f32 = 5.0e-5;
+
+/// The coarsest spacing [`scalp_spacing`] tells apart, in metres: five
+/// centimetres, past any head a person can be drawn with. Provenance:
+/// **chosen**.
+const SCALP_SPACING_MOST: f32 = 5.0e-2;
+
 /// [`paint_skin`], with how much skin each texel spans, from
 /// [`super::bake::bake_measured`], to feather a beard's edge by - see
-/// [`feathered`]. `None` paints the hard edge.
+/// [`feathered`] - and which texels an attached part drew, which take no
+/// painted hair (#471). `None` paints the hard edge, and hair on the parts.
 #[must_use]
 pub(crate) fn paint_skin_with(
     geometry: &AtlasGeometry,
@@ -522,6 +622,11 @@ pub(crate) fn paint_skin_with(
     // — and they are additive rather than multiplicative so a lean eighty-year
     // -old is not creased twice.
     let ink_gain = DEFINITION_INK * condition.definition + AGE_INK * condition.ageing;
+    // The finest the painted scalp's grain is drawn at, where any scalp is
+    // painted: see [`scalp_spacing`].
+    let scalp_floor = hair
+        .filter(|hair| hair.painted.of(Follicle::Scalp).shows())
+        .map_or(0.0, |hair| scalp_spacing(geometry, footprints, hair));
 
     for (index, sample) in geometry.texels.iter().enumerate() {
         let Some(texel) = sample else { continue };
@@ -601,28 +706,8 @@ pub(crate) fn paint_skin_with(
         // #158 paid for it. Spacing is the widest step to a neighbouring texel,
         // which sees through a dilated texel's zero-distance clones to the real
         // interior spacing.
-        let spacing = {
-            let x = (index as u32) % geometry.width;
-            let y = (index as u32) / geometry.width;
-            let mut widest = 0.0f32;
-            for (dx, dy) in [(1i64, 0i64), (-1, 0), (0, 1), (0, -1)] {
-                let (nx, ny) = (i64::from(x) + dx, i64::from(y) + dy);
-                if nx < 0 || ny < 0 {
-                    continue;
-                }
-                if let Some(near) = geometry.get(nx as u32, ny as u32) {
-                    widest = widest.max((near.position - p).length());
-                }
-            }
-            widest
-        };
-        let resolvable = |cycles: f32| -> f32 {
-            if spacing > f32::EPSILON {
-                (1.0 / (2.0 * spacing * cycles)).clamp(0.0, 1.0)
-            } else {
-                1.0
-            }
-        };
+        let spacing = spacing_at(geometry, index, p);
+        let resolvable = |cycles: f32| resolvable_at(spacing, cycles);
 
         // **Painted hair, region by region** (#200). What used to be one
         // stubble scalar over a hand-drawn window — the lower half of the head,
@@ -634,7 +719,16 @@ pub(crate) fn paint_skin_with(
         // of skin catches light differently from skin, whichever region it
         // belongs to, and that is one property rather than five.
         let mut painted = 0.0f32;
-        if let Some(hair) = hair.filter(|_| texel.zone == Zone::Head) {
+        // **On the head's own skin, never on a part hung on it** (#471). An ear
+        // is charted with the head and stands beside the scalp and the
+        // sideburn, and the masks are asked by position alone - the scalp's
+        // line passes over the ear's middle and drops to the nape behind it -
+        // so on most heads with painted hair nine tenths of every ear was the
+        // hair's colour. A lid under a brow took the brow's edge the same way.
+        // Only the bake can tell a part's texel from the skin beside it; with
+        // no footprints, nothing marks one and the masks reach it as before.
+        let on_a_part = footprints.is_some_and(|all| all.on_a_part(index));
+        if let Some(hair) = hair.filter(|_| texel.zone == Zone::Head && !on_a_part) {
             let local = p - hair.follicles.origin();
             // The coarsest grain any region asked for, for the coverage figure
             // the relief and roughness take: they want one number for hair
@@ -677,7 +771,14 @@ pub(crate) fn paint_skin_with(
                 // cells of checkerboard. See [`Grain`].
                 let grain = crate::hair::painted::Grain::of(follicle);
                 let speckle = noise3(&stubble_field, p, grain.cells) * 0.5 + 0.5;
-                let broken = grain.at(speckle, resolvable(grain.cells));
+                // The scalp's grain no finer than its middling texel: see
+                // [`scalp_spacing`].
+                let resolved = if follicle == Follicle::Scalp {
+                    resolvable_at(spacing.max(scalp_floor), grain.cells)
+                } else {
+                    resolvable(grain.cells)
+                };
+                let broken = grain.at(speckle, resolved);
                 // Toward the hair's own colour, darkened by the skin under it
                 // rather than replacing it: a hair painted on skin is a hair
                 // seen end-on through the skin around it, so the complexion
@@ -825,12 +926,15 @@ pub(crate) fn paint_skin_with(
 /// **A mask's edge is a few millimetres of skin, and under the jaw that is less
 /// than a texel.** The head is one chart wrapped round the neck, so its texel
 /// rows go by height and its columns by the way round: where the skin under the
-/// jaw and behind it turns to face along that wrap, a texel spans four to eight
-/// millimetres of it, and a chin patch fading over five went from bare skin to
-/// its whole colour between one texel and the next - the coarse, hard-edged
-/// patches under the chin and down the back of the jaw. Measured on seeds 175
-/// and 237 (#432), a beard-texel's widest step to its neighbour is 1.6 to 2.0 mm
-/// at the median, 7.4 to 7.8 at the ninetieth percentile.
+/// jaw and behind it turns to face along that wrap, a texel spanned four to
+/// eight millimetres of it, and a chin patch fading over five went from bare
+/// skin to its whole colour between one texel and the next - the coarse,
+/// hard-edged patches under the chin and down the back of the jaw. Measured on
+/// seeds 175 and 237 (#432), a beard-texel's widest step to its neighbour was
+/// 1.6 to 2.0 mm at the median, 7.4 to 7.8 at the ninetieth percentile. The
+/// chart is finer there since #469 - its coarser step 2.5 mm under the jaw and
+/// 3.7 at the sideburn at the median - but still coarse one way and fine the
+/// other.
 ///
 /// So the weights are averaged over a little ellipse of the skin round the
 /// texel, a Gaussian [`FEATHER`] of the texel's own [`Footprint`] across each
@@ -908,7 +1012,16 @@ fn feathered(
 /// nudge. Builder E's round disc of one footprint read 0.711 and 0.475 on the
 /// first and 0.952 and 0.983 on the second, and painted the most halo: 182 to
 /// 446 texels across twelve bearded rolls, against 108 to 301 here.
-const FEATHER: f32 = 1.05;
+///
+/// **Re-measured on #469's chart, and widened from 1.05**: the chart is finer
+/// under the jaw and at the sideburn, and at 1.05 seed 237's steepest step read
+/// 0.661, but 0.792 under a nudge of libm, inside its bound by less than the
+/// hundredth this is held to. At 1.15 it reads 0.637, at most 0.764 under a
+/// nudge, the thousandth-worst at most 0.446; the halo at most 181 more than
+/// the hard edge and the thinned 320, against bounds of 350 and 600; and the
+/// flanks under a whole mask 0.972 at their lowest tenth and 0.993 at the mean,
+/// under every nudge.
+const FEATHER: f32 = 1.15;
 
 /// How flat the feather's ellipse may be: its short axis no shorter than this
 /// share of its long one.

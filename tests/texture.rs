@@ -285,4 +285,258 @@ fn a_beard_painted_at_full_density_is_its_own_colour() {
 /// under any nudge of libm the engine's gate tries. At a density of a half the
 /// regions read 0.492 to 0.501 where they read 0.528 to 0.541 before, the
 /// overlap under the jaw no longer laying the chin and the flanks twice.
+/// Re-measured on #469's finer chart, with the feather a tenth wider: the chin
+/// 0.997 in both, the lowest tenth 0.995 and 0.975; the flanks 0.994 and
+/// 0.995, the lowest tenth 0.984 and 0.974, and no lower than 0.972 under a
+/// nudge; at a half 0.495 to 0.499.
 const PAINTED_SLACK: f32 = 0.025;
+
+/// A person with painted hair in a colour far from their skin, everywhere it
+/// may be painted, and the same person with none.
+fn painted_and_bare(seed: i64) -> (symbios_avatar::Avatar, symbios_avatar::Avatar, [f32; 3]) {
+    let dark = [0.06, 0.045, 0.035];
+    let mut record = AvatarRecord::new("Hair", Archetype::default());
+    record.reroll(seed);
+    record.skin.melanin = 0.12;
+    let hair = &mut record.hair;
+    for paint in [
+        &mut hair.scalp.skin,
+        &mut hair.brows.skin,
+        &mut hair.moustache.skin,
+        &mut hair.chin.skin,
+        &mut hair.flanks.skin,
+    ] {
+        paint.colour = dark;
+        paint.density = 1.0;
+    }
+    record.sanitize();
+    let mut bare = record.clone();
+    let hair = &mut bare.hair;
+    for paint in [
+        &mut hair.scalp.skin,
+        &mut hair.brows.skin,
+        &mut hair.moustache.skin,
+        &mut hair.chin.skin,
+        &mut hair.flanks.skin,
+    ] {
+        paint.density = 0.0;
+    }
+    (
+        symbios_avatar::Avatar::build(&record).expect("a person builds"),
+        symbios_avatar::Avatar::build(&bare).expect("a person builds"),
+        dark,
+    )
+}
+
+/// An sRGB channel in linear light.
+fn linear(channel: f32) -> f32 {
+    if channel <= 0.040_45 {
+        channel / 12.92
+    } else {
+        ((channel + 0.055) / 1.055).powf(2.4)
+    }
+}
+
+/// An atlas's albedo in linear light, and the levels a GPU's mip chain halves
+/// it into: each texel the mean of the four under it.
+fn mip_levels(
+    map: &symbios_texture::generator::TextureMap,
+    count: usize,
+) -> Vec<(usize, Vec<glam::Vec3>)> {
+    let side = map.width as usize;
+    let base = map.albedo[..side * side * 4]
+        .chunks(4)
+        .map(|texel| {
+            glam::Vec3::new(
+                f32::from(texel[0]),
+                f32::from(texel[1]),
+                f32::from(texel[2]),
+            )
+            .map(|channel| linear(channel / 255.0))
+        })
+        .collect();
+    let mut levels: Vec<(usize, Vec<glam::Vec3>)> = vec![(side, base)];
+    while levels.len() < count {
+        let (side, texels) = &levels[levels.len() - 1];
+        let half = side / 2;
+        let at = |x: usize, y: usize| texels[y * side + x];
+        let next = (0..half * half)
+            .map(|index| {
+                let (x, y) = (index % half * 2, index / half * 2);
+                (at(x, y) + at(x + 1, y) + at(x, y + 1) + at(x + 1, y + 1)) * 0.25
+            })
+            .collect();
+        levels.push((half, next));
+    }
+    levels
+}
+
+/// The texels of an atlas `side` texels square whose centres a part's
+/// triangles cover.
+fn texels_of(part: &symbios_avatar::PolyMesh, side: usize) -> Vec<usize> {
+    let scale = side as f32;
+    let mut out = std::collections::BTreeSet::new();
+    for face in &part.faces {
+        for corner in 1..face.len().saturating_sub(1) {
+            let t = [face[0], face[corner], face[corner + 1]].map(|v| part.uvs[v as usize] * scale);
+            let area = (t[1] - t[0]).perp_dot(t[2] - t[0]);
+            if area.abs() < 1e-9 {
+                continue;
+            }
+            let (lo, hi) = (t[0].min(t[1]).min(t[2]), t[0].max(t[1]).max(t[2]));
+            for y in (lo.y.floor().max(0.0) as usize)..=(hi.y.ceil() as usize).min(side - 1) {
+                for x in (lo.x.floor().max(0.0) as usize)..=(hi.x.ceil() as usize).min(side - 1) {
+                    let centre = glam::Vec2::new(x as f32 + 0.5, y as f32 + 0.5);
+                    let one = (t[1] - centre).perp_dot(t[2] - centre) / area;
+                    let two = (t[2] - centre).perp_dot(t[0] - centre) / area;
+                    if one >= 0.0 && two >= 0.0 && one + two <= 1.0 {
+                        out.insert(y * side + x);
+                    }
+                }
+            }
+        }
+    }
+    out.into_iter().collect()
+}
+
+#[test]
+fn a_person_s_ears_and_lids_take_no_painted_hair() {
+    // **Hair colour bled onto a person's ears** (#471, the owner's report). An
+    // ear is charted with the head and stands beside the scalp and the
+    // sideburn, and the painted layer asked its masks by position alone: the
+    // scalp's line runs over the ear's middle at the side and drops to the nape
+    // behind it, so nine tenths of every ear went the hair's colour. A lid took
+    // a brow's edge the same way. Read on the built atlas against the same body
+    // with no painted hair, each texel of a part as its share of the way from
+    // the bare skin toward the hair's colour, at the atlas's own level and the
+    // two mip levels under it.
+    //
+    // Measured at #471, on the first level: an ear on seed 42 the whole way,
+    // nine in ten of its texels past a quarter of it; a lid up to 0.40 of it on
+    // seed 237. Since, nothing, at all three levels. (Further down the chain a
+    // neighbouring chart's hair reaches a part's rim through the gutter between
+    // them, as it reaches every chart's; the skin atlas is drawn without mips.)
+    for seed in [42, 237, 175] {
+        let (painted, bare, hair) = painted_and_bare(seed);
+        let hair = glam::Vec3::from_array(hair).map(linear);
+        let (with, without) = (mip_levels(&painted.skin, 3), mip_levels(&bare.skin, 3));
+        let mut parts: Vec<(&str, &symbios_avatar::PolyMesh)> = Vec::new();
+        for ear in &painted
+            .parts
+            .features
+            .as_ref()
+            .expect("a person has ears")
+            .ears
+        {
+            parts.push(("an ear", ear));
+        }
+        for (lid, _) in painted
+            .parts
+            .eyes
+            .as_ref()
+            .expect("a person has eyes")
+            .lids()
+        {
+            parts.push(("a lid", lid));
+        }
+        for (level, ((side, ours), (_, theirs))) in with.iter().zip(&without).enumerate() {
+            for (name, part) in &parts {
+                let texels = texels_of(part, *side);
+                assert!(
+                    !texels.is_empty(),
+                    "seed {seed}: {name} covers no texel at level {level}"
+                );
+                let worst = texels
+                    .iter()
+                    .map(|&at| {
+                        let toward = hair - theirs[at];
+                        (ours[at] - theirs[at]).dot(toward) / toward.length_squared().max(1e-6)
+                    })
+                    .fold(0.0f32, f32::max);
+                assert!(
+                    worst < 0.02,
+                    "seed {seed}: {name} goes {worst:.2} of the way to the hair's colour at mip \
+                     level {level}"
+                );
+            }
+        }
+    }
+}
+
+#[test]
+fn a_painted_scalp_is_as_grained_on_the_crown_as_behind_it() {
+    // **A disc of crisp stubble on the crown** (#469's fixer). The painted
+    // scalp's grain fades by how finely its texel is sampled, and a person's
+    // head chart closes on its crown, whose last rings come out two to three
+    // times finer than the scalp below; so the grain drew at full strength
+    // there and at half or less elsewhere, and from above a bald or shaved head
+    // wore a disc of speckle. Read on the built atlas as each texel's step from
+    // the mean of its four neighbours, in sRGB levels of luminance, over the
+    // crown (within 15 degrees of straight up from the head joint) against the
+    // back of the scalp (50 to 70 degrees down, behind the joint): the crown's
+    // over the back's, measured before the fix at 1.21, 1.71 and 1.42 on these
+    // rolls and after it at 0.98, 1.08 and 0.99.
+    let mut read = Vec::new();
+    for seed in [42, 175, 237] {
+        let (painted, _, _) = painted_and_bare(seed);
+        let map = &painted.skin;
+        let geometry = symbios_avatar::texture::bake_geometry(
+            &painted.parts.body,
+            &painted.parts.unwrap,
+            map.width,
+        );
+        let joint = painted.rig.in_zone(symbios_avatar::Zone::Head)[0];
+        let origin = painted.rig.joints[joint].position;
+        let width = map.width as usize;
+        let luminance = |at: usize| {
+            let rgb = &map.albedo[at * 4..at * 4 + 3];
+            0.3 * f32::from(rgb[0]) + 0.59 * f32::from(rgb[1]) + 0.11 * f32::from(rgb[2])
+        };
+        let on_head = |at: usize| {
+            geometry.texels[at].is_some_and(|texel| texel.zone == symbios_avatar::Zone::Head)
+        };
+        let (mut crown, mut back) = ((0.0f32, 0u32), (0.0f32, 0u32));
+        for (at, texel) in geometry.texels.iter().enumerate() {
+            let Some(texel) = texel else { continue };
+            let (x, y) = (at % width, at / width);
+            if texel.zone != symbios_avatar::Zone::Head || x == 0 || y == 0 || x + 1 >= width {
+                continue;
+            }
+            let around = [at - 1, at + 1, at - width, at + width];
+            if around
+                .iter()
+                .any(|&near| near >= geometry.texels.len() || !on_head(near))
+            {
+                continue;
+            }
+            let local = texel.position - origin;
+            let down = local
+                .normalize_or_zero()
+                .y
+                .clamp(-1.0, 1.0)
+                .acos()
+                .to_degrees();
+            let step = (luminance(at)
+                - around.iter().map(|&near| luminance(near)).sum::<f32>() / 4.0)
+                .abs();
+            if down < 15.0 {
+                crown = (crown.0 + step, crown.1 + 1);
+            } else if (50.0..70.0).contains(&down) && local.z < 0.0 {
+                back = (back.0 + step, back.1 + 1);
+            }
+        }
+        assert!(
+            crown.1 > 0 && back.1 > 0,
+            "seed {seed}: no crown or no back read"
+        );
+        let ratio = (crown.0 / crown.1 as f32) / (back.0 / back.1 as f32);
+        println!("seed {seed}: the crown's grain {ratio:.2} of the back's");
+        read.push((seed, ratio));
+    }
+    for (seed, ratio) in read {
+        assert!(
+            ratio <= 1.15,
+            "seed {seed}: the crown's painted grain is {ratio:.2} of the back of the scalp's"
+        );
+    }
+}

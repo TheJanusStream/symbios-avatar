@@ -31,15 +31,24 @@
 //! wrapped round the bone leaving it, so the coat is as fine where the leg
 //! leaves the body as on either side.
 //!
-//! A beast's charts are the other exception (#395): skin that faces along a
-//! chart's axis has no height to spread over, so it smears. A person's skull and
-//! trunk mostly face away from theirs, but a beast's breast and rump face straight
+//! A beast's charts are another exception (#395): skin that faces along a
+//! chart's axis has no height to spread over, so it smears. A person's trunk
+//! mostly faces away from its axis, but a beast's breast and rump face straight
 //! along its spine, and the underside of a head on a raised neck straight down
 //! that neck. So a beast's head is wrapped round the head's own axis, from the
 //! occiput to the nose, and its charts' heights go by how far the skin runs
 //! (`BeastCharts`). A beast's tail curls away from the bone leaving its hips, so
 //! it is wrapped round its own bones instead (#397), from the root to the tip
 //! with the seam along its underside (`TailChain`).
+//!
+//! A person's head is the last (#469). Wrapped round its vertices' centroid,
+//! which its refined face pulls to just behind the lips, its back came out six
+//! to eight millimetres a texel round the head and the plane under its chin,
+//! which faces down the neck, up to thirty. So it is wrapped round the head
+//! joint, its height counts the skin drawing in under the jaw as a beast's
+//! does, its face is seen from in front of the joint so the nose's flanks keep
+//! their texels, and it asks for the same share of the atlas as before, in its
+//! own shape (`PersonHead`).
 //!
 //! Unwrapping duplicates vertices — at chart boundaries, and along each chart's
 //! seam — so the result carries its own vertex list with a [`UvUnwrap::source`]
@@ -291,6 +300,244 @@ impl BeastCharts {
     }
 }
 
+/// What a person's head chart asks that every other chart does not (#469).
+///
+/// **Its axis runs through the head joint.** A chart wraps round the bone
+/// entering its zone, through the centroid of its own vertices; a person's face
+/// is refined ten times over where the vault is not, so that centroid stood
+/// some 70 mm in front of the head joint, behind the lips, and the wrap's axis
+/// ran up through the face. Seen from there the face filled most of the way
+/// round and the whole back of the head a sliver of it: behind the cheek, at
+/// the sideburn, over the scalp and at the nape a texel spanned six to eight
+/// millimetres round the head while its rows stood under one apart, and the
+/// hairline behind the ear and a beard's edge stepped. Round the head's own
+/// axis every part of the head has its share of the way round, and the face
+/// takes its extra columns from the density warp ([`PERSON_FOLLOW_ROUND`]).
+/// The axis now leaves the head at the crown, whose cap is flattened down it as
+/// a chart of its own, as every cap is.
+///
+/// **Its height counts the skin under the jaw.** That skin faces down the neck,
+/// and by height alone it came out at a few rows, up to thirty millimetres a
+/// texel on the plane under the chin. Below the head's waist the height counts
+/// how far the skin has drawn in toward the axis as well, as a beast's does
+/// ([`along_the_skin`]); above it only the crown's last rings count
+/// ([`CROWN_CLOSING`]).
+///
+/// **Its face is seen from in front of the joint.** Round the joint, the skin
+/// that stands out of the face and faces the side, the flanks of the nose and
+/// the edges of the philtrum, runs nearly along the line from the axis, so the
+/// angle round the head is read from a point brought forward toward the face
+/// as the skin comes round to the front ([`FrontView`]).
+///
+/// **It asks for the area it always did, in its own shape.** Its area is asked
+/// for as before, round its vertices' centroid and by its extent along the
+/// axis, less what its cap asks, so the head takes from the atlas what it
+/// always took; but in the shape of the skin it covers round the joint
+/// ([`PERSON_HEAD_ASPECT`]), not the old chart's, which was less than half as
+/// wide for its height. A rectangle of another shape lies in the shelf packer's
+/// shelves another way, so every other chart moves with it: measured by #469's
+/// fixer, their texel area 6% smaller to 9% larger over 32 rolls and corners,
+/// 3% larger on average. The texels the back of the head and the plane under
+/// the chin gain come from the face's fine way, a row under a millimetre on the
+/// lips.
+///
+/// **What it does not change.** Every painter reads a texel's body position,
+/// never its place in the atlas, so what is painted where stays where it was;
+/// but a grain that fades by how finely its texel is sampled (the skin
+/// painter's `resolvable`) shows more or less of itself as the sampling moves.
+/// And the face is still one island in the middle of its chart, with the seam
+/// up the back.
+#[derive(Clone, Copy, Debug)]
+struct PersonHead {
+    /// A point on the head's axis: the head joint, in body space.
+    on_axis: Vec3,
+}
+
+impl PersonHead {
+    /// What `rig`'s head asks of its chart, if it is a person's.
+    fn of(rig: &Rig, beast: Option<&BeastCharts>) -> Option<Self> {
+        if beast.is_some() || !rig.anatomy.human_head() {
+            return None;
+        }
+        let joint = *rig.in_zone(Zone::Head).first()?;
+        Some(Self {
+            on_axis: rig.joints[joint].position,
+        })
+    }
+
+    /// Whether `group` is the head this wraps, rather than its cap.
+    fn wraps(person: Option<&Self>, group: &Group) -> bool {
+        person.is_some() && group.zone == Zone::Head && group.kind == Kind::Cylindrical
+    }
+
+    /// The rectangle the head asks for: the area it `asked` for round its
+    /// vertices' centroid, in the shape of its `own` chart round the joint, made
+    /// [`PERSON_HEAD_ASPECT`] as wide as that.
+    fn shaped(asked: Vec2, own: Vec2) -> Vec2 {
+        let scale = (asked.x * asked.y / (own.x * own.y).max(f32::EPSILON)).sqrt();
+        Vec2::new(
+            own.x * scale * PERSON_HEAD_ASPECT,
+            own.y * scale / PERSON_HEAD_ASPECT,
+        )
+    }
+}
+
+/// How wide a person's head chart is asked for, against the shape of the skin it
+/// covers round the head joint (#469).
+///
+/// Asked in the shape the old chart had round the centroid, the chart was less
+/// than half as wide for its height as the skin wrapped round the joint, and a
+/// texel spanned 3.3 mm round the head against 1.5 mm up it (the medians over
+/// the head). In the skin's own shape the face ran short of rows. At three
+/// quarters of the skin's width, a ninth wider than the old shape, the columns
+/// that [`FrontView`] gives the nose are paid for: against the old shape (about
+/// 0.66 of the skin's width), behind the cheek, over the scalp and at the nape
+/// an eighth finer, the face's ninetieth percentile a ninth finer, the nose's
+/// median a twelfth coarser.
+/// Provenance: **measured** on the rolls and corners of #469's fixer.
+const PERSON_HEAD_ASPECT: f32 = 0.74;
+
+/// How a person's head chart is seen from in front of the head joint, at its
+/// face (#469).
+///
+/// Wrapped round the head joint, skin standing out of the face and facing the
+/// side - the flanks of the nose, the wings of the nostrils, the edges of the
+/// philtrum - runs nearly along the line from the axis, and a step along it
+/// barely turns the angle: the side of the nose came out whole triangles to a
+/// texel, twenty millimetres one way at its ninety-ninth percentile.
+/// Wrapped round the old centroid,
+/// just behind the lips, it had been fine, and the back of the head had paid
+/// for it. So the wrap's angle is read from a point that comes forward from the
+/// joint as the skin comes round to the front: at the front, [`FRONT_REACH`] of
+/// the face's depth in front of the axis, never more than [`FRONT_BAND_SHARE`]
+/// of the depth of the face at the skin's own height, and falling away as the
+/// [`FRONT_FALLOFF`]th power of how squarely the skin faces forward, so the
+/// sides, the ears and the back are read from the joint as before.
+///
+/// Its depth is read in [`FRONT_BANDS`] bands up the head, from the nearest
+/// skin within [`FRONT_WIDE`] of straight ahead in each, the least of each band
+/// and the two beside it, so that the point never stands at or past the skin
+/// in front of it, where the wrap would fold: under the jaw and at the crown
+/// the bands are shallow and the angle is the joint's.
+#[derive(Clone, Debug)]
+struct FrontView {
+    /// The face's depth in front of the axis, by band up the head, nearest skin.
+    depth: [f32; FRONT_BANDS],
+    /// The height the first band starts at.
+    low: f32,
+    /// How tall each band is.
+    band: f32,
+    /// How far in front of the axis the angle is read from at most.
+    reach: f32,
+}
+
+impl FrontView {
+    /// The face of the chart over `vertices`, wrapped round `axis` through
+    /// `origin`, `tangent` pointing forward and `binormal` to the side.
+    fn of(
+        mesh: &PolyMesh,
+        vertices: &[u32],
+        origin: Vec3,
+        axis: Vec3,
+        tangent: Vec3,
+        binormal: Vec3,
+    ) -> Self {
+        // Read twice rather than kept, so that a build holds nothing for it.
+        let read = || {
+            vertices.iter().map(|&vertex| {
+                let offset = mesh.positions[vertex as usize] - origin;
+                (offset.dot(axis), offset.dot(binormal), offset.dot(tangent))
+            })
+        };
+        let (low, high) = read().fold((f32::INFINITY, f32::NEG_INFINITY), |(low, high), at| {
+            (low.min(at.0), high.max(at.0))
+        });
+        let band = ((high - low) / FRONT_BANDS as f32).max(f32::EPSILON);
+        let mut nearest = [f32::INFINITY; FRONT_BANDS];
+        for (height, side, ahead) in read() {
+            if ahead > 0.0 && side.abs() < FRONT_WIDE * ahead {
+                let at = (((height - low) / band) as usize).min(FRONT_BANDS - 1);
+                nearest[at] = nearest[at].min(ahead);
+            }
+        }
+        let depth: [f32; FRONT_BANDS] = std::array::from_fn(|at| {
+            let beside = [at.saturating_sub(1), at, (at + 1).min(FRONT_BANDS - 1)];
+            let least = beside
+                .map(|near| nearest[near])
+                .into_iter()
+                .fold(f32::INFINITY, f32::min);
+            if least.is_finite() { least } else { 0.0 }
+        });
+        let deepest = depth.iter().copied().fold(0.0, f32::max);
+        Self {
+            depth,
+            low,
+            band,
+            reach: FRONT_REACH * deepest,
+        }
+    }
+
+    /// The face's depth at `height`, between the bands' middles.
+    fn depth_at(&self, height: f32) -> f32 {
+        let last = self.depth.len() - 1;
+        let at = ((height - self.low) / self.band - 0.5).clamp(0.0, last as f32);
+        let below = (at as usize).min(last);
+        let above = (below + 1).min(last);
+        let share = at - below as f32;
+        self.depth[below] + (self.depth[above] - self.depth[below]) * share
+    }
+
+    /// The angle round the axis of skin `side` of it and `ahead` of it, at
+    /// `height` along it.
+    fn turn(&self, side: f32, ahead: f32, height: f32) -> f32 {
+        let reach = (side * side + ahead * ahead).sqrt();
+        if reach <= f32::EPSILON {
+            return side.atan2(ahead);
+        }
+        let facing = (ahead / reach).max(0.0);
+        let forward =
+            self.reach.min(FRONT_BAND_SHARE * self.depth_at(height)) * facing.powi(FRONT_FALLOFF);
+        side.atan2(ahead - forward)
+    }
+}
+
+/// How many bands up a person's head [`FrontView`] reads the face's depth in.
+/// Provenance: **chosen** (#469's fixer): a lip's height or less each; twelve
+/// measured alike.
+const FRONT_BANDS: usize = 24;
+
+/// How near straight ahead, as the side's share of the way ahead, skin counts
+/// toward the face's depth in a band. Provenance: **measured** (#469's fixer):
+/// at three tenths, the deepest skin beside the nose went uncounted, the worst
+/// hundredth of the nose's flanks went from 16 to 26 mm a texel and the
+/// ninetieth percentile under the jaw from 4.0 to 4.8.
+const FRONT_WIDE: f32 = 0.5;
+
+/// How far in front of the joint a person's head is seen from, as a share of
+/// the face's depth at its deepest band. Provenance: **measured** (#469's
+/// fixer): the worst hundredth of the nose and the lips at 5.3 mm a texel at
+/// 0.45 and 4.4 here; at 0.63, 4.0, but the shelves beside the nose, seen
+/// from nearly level with them, began to fold - the worst hundredth of the
+/// nose's flanks from 16 to 32 mm - and the face's ninetieth percentile grew
+/// coarser.
+const FRONT_REACH: f32 = 0.54;
+
+/// The most of the face's depth at a height that the point it is seen from
+/// comes forward, so that it stays behind the skin in front of it. Provenance:
+/// **derived**: on a round head the angle turns the same way all round while
+/// the point stands inside 0.87 of the radius at [`FRONT_FALLOFF`]'s power.
+/// Without it the point stood at or past the skin under the jaw and at the
+/// crown, and the whole head came out a sixth coarser.
+const FRONT_BAND_SHARE: f32 = 0.85;
+
+/// How fast, as a power of how squarely skin faces forward, the point a person's
+/// head is seen from falls back to the joint round the sides. Provenance:
+/// **measured** (#469's fixer): at the square the cheeks and the skin under
+/// the jaw paid for the nose, the ninetieth percentile under the jaw from 4.0
+/// to 5.3 mm a texel; at the sixth power the eyes beside it did, their median
+/// from 1.85 to 1.96.
+const FRONT_FALLOFF: i32 = 4;
+
 /// A beast's tail, charted along its bones rather than round the first of them
 /// (#397).
 ///
@@ -489,18 +736,47 @@ pub(crate) fn unwrap_framed(
         })
         .collect();
     let tail = beast.and_then(|_| TailChain::of(rig));
-    let groups = connected_groups(mesh, rig, &face_zones, beast, tail.as_ref());
+    let person = PersonHead::of(rig, beast);
+    let groups = connected_groups(
+        mesh,
+        rig,
+        &face_zones,
+        beast,
+        tail.as_ref(),
+        person.as_ref(),
+    );
 
     // Project every chart into its own local square first, then pack.
     let mut projections = Vec::with_capacity(groups.len());
+    let mut sizes: Vec<Vec2> = Vec::with_capacity(groups.len() + extra.len());
     for group in &groups {
-        projections.push(project(mesh, rig, group, beast, tail.as_ref()));
+        let projection = project(mesh, rig, group, beast, tail.as_ref(), person.as_ref());
+        // A person's head asks for the atlas it always asked for (#469): see
+        // [`PersonHead`].
+        sizes.push(if PersonHead::wraps(person.as_ref(), group) {
+            let asked = project(mesh, rig, group, beast, tail.as_ref(), None).atlas_size(config);
+            PersonHead::shaped(asked, projection.atlas_size(config))
+        } else {
+            projection.atlas_size(config)
+        });
+        projections.push(projection);
     }
-
-    let mut sizes: Vec<Vec2> = projections
-        .iter()
-        .map(|projection| projection.atlas_size(config))
-        .collect();
+    // And its cap at the crown out of that, so that the head, cap and all, asks
+    // for what it did.
+    if person.is_some() {
+        let caps: f32 = groups
+            .iter()
+            .zip(&sizes)
+            .filter(|(group, _)| group.zone == Zone::Head && group.kind == Kind::Planar)
+            .map(|(_, size)| size.x * size.y)
+            .sum();
+        for (group, size) in groups.iter().zip(&mut sizes) {
+            if PersonHead::wraps(person.as_ref(), group) {
+                let area = size.x * size.y;
+                *size *= ((area - caps).max(0.5 * area) / area.max(f32::EPSILON)).sqrt();
+            }
+        }
+    }
     let charts = sizes.len();
     sizes.extend_from_slice(extra);
     let packed = pack::shelf_pack(&sizes, config.gutter);
@@ -645,6 +921,7 @@ fn connected_groups(
     face_zones: &[Zone],
     beast: Option<&BeastCharts>,
     tail: Option<&TailChain>,
+    person: Option<&PersonHead>,
 ) -> Vec<Group> {
     let mut axis_of: HashMap<Zone, Vec3> = HashMap::new();
     // Where each zone's material stands, for asking whether a face is AT the
@@ -691,7 +968,11 @@ fn connected_groups(
             let (centre, count) = centre_of[&zone];
             let origin = match on_tail {
                 Some((centroid, spot)) => centroid - spot.flat,
-                None => on_head.map_or(centre / count.max(1.0), |head| head.on_axis),
+                None => match (on_head, person.filter(|_| zone == Zone::Head)) {
+                    (Some(head), _) => head.on_axis,
+                    (None, Some(person)) => person.on_axis,
+                    (None, None) => centre / count.max(1.0),
+                },
             };
             let (tangent, binormal) = frame(axis);
             let corners = &mesh.faces[face];
@@ -844,6 +1125,7 @@ fn project(
     group: &Group,
     beast: Option<&BeastCharts>,
     tail: Option<&TailChain>,
+    person: Option<&PersonHead>,
 ) -> Projection {
     let vertices: Vec<u32> = {
         let mut all: Vec<u32> = group
@@ -857,16 +1139,20 @@ fn project(
     };
 
     let on_head = BeastCharts::head(beast, group.zone);
-    let origin = on_head.map_or_else(
-        || {
+    // A person's head, wrapped round the head's own axis rather than round its
+    // vertices' centroid (#469), and its cap at the crown flattened down it.
+    let person = person.filter(|_| group.zone == Zone::Head);
+    let origin = match (on_head, person) {
+        (Some(head), _) => head.on_axis,
+        (None, Some(person)) => person.on_axis,
+        (None, None) => {
             vertices
                 .iter()
                 .map(|&v| mesh.positions[v as usize])
                 .sum::<Vec3>()
                 / vertices.len().max(1) as f32
-        },
-        |head| head.on_axis,
-    );
+        }
+    };
     let on_tail = tail.filter(|_| group.zone == Zone::Tail);
     // A tail's cap is flattened down the bone beside it, its top up the chart.
     let tip = on_tail
@@ -897,8 +1183,20 @@ fn project(
     // both and curves away from its bone, so counting its skin as closing took its
     // worst stretch from 3 to 30 on one roll, and a pelvis and a tail gained nothing.
     let closes = matches!(group.zone, Zone::Head | Zone::Chest | Zone::Extremity(_));
-    let skin = (beast.is_some() && closes && group.kind == Kind::Cylindrical)
-        .then(|| along_the_skin(mesh, &vertices, origin, axis));
+    // And a person's head (#469), at its crown only within its last rings: see
+    // [`PersonHead`].
+    let beyond = match (beast, person) {
+        (Some(_), _) if closes => Some(CLOSING),
+        (None, Some(_)) => Some(CROWN_CLOSING),
+        _ => None,
+    };
+    let skin = beyond
+        .filter(|_| group.kind == Kind::Cylindrical)
+        .map(|beyond| along_the_skin(mesh, &vertices, origin, axis, beyond));
+    // And a person's face seen from in front of the joint: see [`FrontView`].
+    let front = person
+        .filter(|_| group.kind == Kind::Cylindrical)
+        .map(|_| FrontView::of(mesh, &vertices, origin, axis, tangent, binormal));
 
     for &vertex in &vertices {
         let at = mesh.positions[vertex as usize];
@@ -923,7 +1221,11 @@ fn project(
                 // behind the body. On a beast's head it points at the crown, so
                 // the seam lands under the chin, and on its tail at the tail's
                 // top, so the seam runs along the underside.
-                let turn = flat.dot(binormal).atan2(flat.dot(tangent));
+                let (side, ahead) = (flat.dot(binormal), flat.dot(tangent));
+                let turn = front.as_ref().map_or_else(
+                    || side.atan2(ahead),
+                    |front| front.turn(side, ahead, height),
+                );
                 angle.insert(vertex, turn / std::f32::consts::TAU + 0.5);
                 along.insert(
                     vertex,
@@ -1054,10 +1356,18 @@ fn project(
     // its radius vanishes, so its tip reads dense while carrying nothing, and
     // warping toward it re-stretched the faces `tests/uv.rs` already names as
     // the worst on the body.
-    let (u_warp, v_warp) = if group.zone == Zone::Head {
-        (density_warp(&u_samples), density_warp(&v_samples))
-    } else {
-        (Vec::new(), Vec::new())
+    let (u_warp, v_warp) = match person {
+        // A person's head follows its detail by its own measure (#469): see
+        // [`PersonHead`].
+        Some(_) => (
+            density_warp(&u_samples, PERSON_FOLLOW_ROUND, WARP_SLOPE),
+            density_warp(&v_samples, PERSON_FOLLOW_UP, WARP_SLOPE),
+        ),
+        None if group.zone == Zone::Head => (
+            density_warp(&u_samples, WARP_FOLLOW, WARP_SLOPE),
+            density_warp(&v_samples, WARP_FOLLOW, WARP_SLOPE),
+        ),
+        None => (Vec::new(), Vec::new()),
     };
 
     Projection {
@@ -1166,10 +1476,23 @@ struct AlongTheSkin {
     widest: f32,
     /// Where along the axis that is.
     waist: f32,
+    /// How near the axis, as a share of the widest, skin past the waist the way
+    /// the axis runs has to lie before its drawing in counts: [`CLOSING`], as
+    /// short of the waist, on a beast's charts, which close on their axis at
+    /// both ends; [`CROWN_CLOSING`] on a person's head (#469), whose crown's rows
+    /// are its face's.
+    beyond: f32,
 }
 
-/// The widest of a chart's skin, about `axis` through `origin`.
-fn along_the_skin(mesh: &PolyMesh, vertices: &[u32], origin: Vec3, axis: Vec3) -> AlongTheSkin {
+/// The widest of a chart's skin, about `axis` through `origin`, its drawing in
+/// past the waist counted within `beyond` of the widest.
+fn along_the_skin(
+    mesh: &PolyMesh,
+    vertices: &[u32],
+    origin: Vec3,
+    axis: Vec3,
+    beyond: f32,
+) -> AlongTheSkin {
     let read: Vec<(f32, f32)> = vertices
         .iter()
         .map(|&vertex| {
@@ -1189,6 +1512,7 @@ fn along_the_skin(mesh: &PolyMesh, vertices: &[u32], origin: Vec3, axis: Vec3) -
     AlongTheSkin {
         widest,
         waist: heights / f32::max(count, 1.0),
+        beyond,
     }
 }
 
@@ -1205,7 +1529,8 @@ impl AlongTheSkin {
     fn height(&self, height: f32, radius: f32) -> f32 {
         let off = height - self.waist;
         let side = (off / (WAIST_BAND * self.widest).max(f32::EPSILON)).clamp(-1.0, 1.0);
-        height + side * (CLOSING * self.widest - radius).max(0.0)
+        let closing = if side > 0.0 { self.beyond } else { CLOSING };
+        height + side * (closing * self.widest - radius).max(0.0)
     }
 }
 
@@ -1214,6 +1539,16 @@ impl AlongTheSkin {
 /// than this, and counting those shears the whole chart for nothing.
 /// Provenance: **tuned against the charts' stretch** (#395).
 const CLOSING: f32 = 0.6;
+
+/// How near a person's head's axis, as a share of its widest, skin above the
+/// waist has to lie before its drawing in counts (#469): the crown's last few
+/// rings and no more. The rows a crown spreads over are the face's rows too, and
+/// counting the whole vault, as [`CLOSING`] does under the jaw, took a tenth of
+/// the face's and the eyes' rows; at this share the scalp's rows at the crown
+/// close from 2.8 to 2.2 mm apart (their 90th percentile) for a tenth of a
+/// millimetre on the face's.
+/// Provenance: **measured** on the rolls and corners of #469.
+const CROWN_CLOSING: f32 = 0.3;
 
 /// How near the widest a vertex has to lie, as a share of it, to say where the
 /// chart's waist is. Provenance: **chosen** (#395): a ring's worth, not one vertex.
@@ -1251,11 +1586,13 @@ const WARP_FOLLOW: f32 = 0.5;
 /// sampled, never what is painted there.
 ///
 /// Returns piecewise-linear knots mapping normalized `[0, 1]` onto itself:
-/// the corner-count CDF blended [`WARP_FOLLOW`] of the way from identity.
+/// the corner-count CDF, each bin held within `slope` of its uniform share,
+/// blended `follow` of the way from identity - [`WARP_FOLLOW`] and
+/// [`WARP_SLOPE`], or a person's head's own (#469).
 /// Charts with fewer corners than fill its bins keep the identity — a CDF
 /// built from a handful of samples is noise, and the charts that small are
 /// exactly the ones a warp cannot help.
-fn density_warp(samples: &[f32]) -> Vec<f32> {
+fn density_warp(samples: &[f32], follow: f32, slope: f32) -> Vec<f32> {
     if samples.len() < WARP_BINS * 4 {
         return Vec::new();
     }
@@ -1269,7 +1606,7 @@ fn density_warp(samples: &[f32]) -> Vec<f32> {
     // rest of the chart or blow a face past the stretch guard.
     let uniform_share = samples.len() as f32 / WARP_BINS as f32;
     for count in &mut counts {
-        *count = count.clamp(uniform_share / WARP_SLOPE, uniform_share * WARP_SLOPE);
+        *count = count.clamp(uniform_share / slope, uniform_share * slope);
     }
     let total: f32 = counts.iter().sum();
     let mut knots = Vec::with_capacity(WARP_BINS + 1);
@@ -1278,7 +1615,7 @@ fn density_warp(samples: &[f32]) -> Vec<f32> {
     for (bin, &count) in counts.iter().enumerate() {
         running += count / total;
         let uniform = (bin + 1) as f32 / WARP_BINS as f32;
-        knots.push(uniform + (running - uniform) * WARP_FOLLOW);
+        knots.push(uniform + (running - uniform) * follow);
     }
     knots
 }
@@ -1291,6 +1628,31 @@ fn density_warp(samples: &[f32]) -> Vec<f32> {
 /// Provenance: **derived** from `tests/uv.rs`'s 11.5x stretch guard and the
 /// 5.3x worst face outside a tail it records.
 const WARP_SLOPE: f32 = 2.5;
+
+/// How far a person's head chart's columns follow its detail round the head,
+/// in place of [`WARP_FOLLOW`] (#469).
+///
+/// Wrapped round its vertices' centroid, the axis ran through the face and the
+/// face took most of the way round by the angle alone; round the head joint
+/// every part of the head has its share of it, and the face's extra columns
+/// come from this alone. At [`WARP_FOLLOW`]'s half the mouth was a fifth
+/// coarser round the head than it had been; at seven tenths the face's and the
+/// eyes' coarser step is finer than it was and the mouth's within a tenth of
+/// it, while the back of the head still spans half what it did.
+/// Provenance: **measured** on the rolls and corners of #469.
+const PERSON_FOLLOW_ROUND: f32 = 0.7;
+
+/// How far a person's head chart's rows follow its detail up the head, in place
+/// of [`WARP_FOLLOW`] (#469).
+///
+/// The rows the mouth's detail draws are every column's, the nape's as much as
+/// the lips'; and the face's own median grew coarser as this rose, its rows
+/// going to the mouth's band from the forehead, the cheeks and the eyes.
+/// Provenance: **measured** on the rolls and corners of #469, and lowered from
+/// 0.4 by its fixer, when the head's rows grew fewer under
+/// [`PERSON_HEAD_ASPECT`]: at 0.3 the face's and the eyes' median a thirtieth
+/// finer, the mouth's a seventieth coarser.
+const PERSON_FOLLOW_UP: f32 = 0.3;
 
 /// Evaluates a [`density_warp`] table at `at`; an empty table is the identity.
 fn warp(at: f32, knots: &[f32]) -> f32 {

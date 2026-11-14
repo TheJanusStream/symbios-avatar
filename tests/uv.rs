@@ -409,3 +409,216 @@ fn a_beast_s_tail_is_charted_along_its_bones() {
         "seed {seed}: a tenth of a tail is charted at {thin:.2} of the barrel"
     );
 }
+
+/// Where on a person's head a point lies, for
+/// `a_person_s_head_is_charted_as_finely_behind_and_under_it_as_its_face`.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum Part {
+    Face,
+    Mouth,
+    Eyes,
+    UnderTheJaw,
+    BehindTheCheek,
+    Sideburn,
+    Scalp,
+    Nape,
+    /// The frontmost skin of the face: the nose and the lips, which stand out
+    /// of it and face the side as much as forward.
+    Nose,
+}
+
+/// Which [`Part`]s a head-local point is in: by the head's own landmarks, the
+/// jawline the face was carved to, the scalp's hairline, the ear's centre and
+/// the eye line, as the follicle regions are cut.
+fn parts_at(
+    follicles: &symbios_avatar::Follicles,
+    canon: &symbios_avatar::Canon,
+    local: symbios_avatar::Vec3,
+) -> Vec<Part> {
+    let reach = (local.x * local.x + local.z * local.z).sqrt();
+    let facing = if reach > 1e-6 { local.z / reach } else { 1.0 };
+    let (ear, frame) = (canon.ear_centre(), canon.frame);
+    if local.y < follicles.jawline(facing) && facing > -0.35 {
+        return vec![Part::UnderTheJaw];
+    }
+    if follicles.weight(symbios_avatar::Follicle::Scalp, local) >= 0.5 {
+        return vec![Part::Scalp];
+    }
+    if facing < -0.35 {
+        return vec![Part::Nape];
+    }
+    if facing <= 0.45 && local.y < ear - 0.1 * frame {
+        return vec![Part::BehindTheCheek];
+    }
+    if facing <= 0.55 && local.y >= ear - 0.1 * frame {
+        return vec![Part::Sideburn];
+    }
+    let mut parts = vec![Part::Face];
+    // The mouth's height, as `face::features` places it.
+    if facing > 0.7 && (local.y - canon.down(0.596)).abs() < 0.08 * frame {
+        parts.push(Part::Mouth);
+    }
+    if facing > 0.5 && (local.y - canon.level).abs() < 0.07 * frame {
+        parts.push(Part::Eyes);
+    }
+    parts
+}
+
+#[test]
+fn a_person_s_head_is_charted_as_finely_behind_and_under_it_as_its_face() {
+    // **The head's chart spent four to eight millimetres of skin a texel under
+    // the jaw and behind the cheek** (#469). It was wrapped round its vertices'
+    // centroid, which the refined face pulls to just behind the lips, so the
+    // whole back of the head had a sliver of the way round; and the plane under
+    // the chin faces down the neck, so by height alone it had a few rows. The
+    // hairline behind the ear stepped, and a beard's edge.
+    //
+    // Read on the 1024-texel atlas as the skin the coarser way of each texel
+    // spans - the larger of the two the triangle's map from the atlas onto the
+    // skin stretches a texel to - by the skin each triangle covers, pooled over
+    // three rolls and two corners: the median, and the ninetieth percentile
+    // under the jaw. Measured before #469, at it, and after its fixer, in
+    // millimetres: under the jaw 5.2, 2.6 and 2.7, at the ninetieth 29.4, 4.4
+    // and 4.7; behind the cheek 6.4, 3.5 and 3.3; at the sideburn 5.9, 3.6 and
+    // 3.5; over the scalp 8.3, 3.9 and 3.7; at the nape 7.9, 3.5 and 3.3. And
+    // the face's own, which its importance holds: the face 2.12, 1.80 and 1.72,
+    // its ninetieth 5.33, 3.43 and 3.36; the eyes 2.19, 1.96 and 1.94; the mouth
+    // 1.37, 1.55 and 1.46, the rows its detail drew from every column of the
+    // old chart.
+    //
+    // **And the nose and the lips** (#469's fixer): round the head joint the
+    // skin that stands out of the face and faces the side, the nose's flanks
+    // and the philtrum's edges, runs nearly along the line from the axis, and
+    // whole triangles of the nose's side came out one texel. Read as the worst
+    // hundredth of the frontmost sixth of the head facing forward, 3.49 before
+    // #469, 8.61 at it and 4.66 after its fixer; the old chart's was its
+    // centroid's luck, standing just behind the lips, and the back of the head
+    // paid for it. Under a nudge of libm the bodies move and these with them,
+    // at most: the face 1.81, the eyes 2.03, the mouth 1.46, under the jaw 4.71
+    // at the ninetieth, the scalp 3.81, the nose 4.72.
+    let corner = |edit: fn(&mut symbios_avatar::HumanoidParams)| {
+        let mut record = AvatarRecord::default();
+        if let Archetype::Humanoid(params) = &mut record.archetype {
+            edit(params);
+        }
+        record
+    };
+    let mut records: Vec<AvatarRecord> = [175, 237, 9]
+        .into_iter()
+        .map(|seed| {
+            let mut record = AvatarRecord::default();
+            record.reroll(seed);
+            record
+        })
+        .collect();
+    records.push(corner(|params| params.head_size = -1.0));
+    records.push(corner(|params| params.face_length = 1.0));
+
+    let size = 1024.0;
+    let mut read: Vec<(Part, f32, f32)> = Vec::new();
+    let mut ahead: Vec<(symbios_avatar::Vec3, f32, f32)> = Vec::new();
+    for record in &records {
+        let avatar = symbios_avatar::Avatar::build(record).expect("a person builds");
+        let body = &avatar.parts.body;
+        let skull = symbios_avatar::face::Skull::measure(body, &avatar.rig).expect("a head");
+        let canon = symbios_avatar::Canon::measure(&avatar.rig, &skull, &record.eyes);
+        let follicles =
+            symbios_avatar::Follicles::of(&avatar.rig, &skull, &canon, &record.hair.regions);
+        let uv = &avatar.parts.unwrap;
+        for (index, face) in uv.faces.iter().enumerate() {
+            if uv.charts[uv.chart_of_face[index] as usize].zone != Zone::Head {
+                continue;
+            }
+            let Some((_, _, finest)) = texel_reach(uv, body, face) else {
+                continue;
+            };
+            if finest <= 0.0 {
+                continue;
+            }
+            let corners =
+                [face[0], face[1], face[2]].map(|v| body.positions[uv.source[v as usize] as usize]);
+            let skin = (corners[1] - corners[0])
+                .cross(corners[2] - corners[0])
+                .length()
+                * 0.5;
+            let local = (corners[0] + corners[1] + corners[2]) / 3.0 - follicles.origin();
+            // The coarser step: one texel over the least the map stretches.
+            let step = 1000.0 / (finest * size);
+            for part in parts_at(&follicles, &canon, local) {
+                read.push((part, step, skin));
+            }
+            ahead.push((local, step, skin));
+        }
+        // The nose: skin facing within a third of the way round from straight
+        // ahead, in the frontmost sixth of the head's depth - the nose and the
+        // lips.
+        let front = ahead.iter().map(|row| row.0.z).fold(f32::MIN, f32::max);
+        for (local, step, skin) in ahead.drain(..) {
+            let reach = (local.x * local.x + local.z * local.z).sqrt();
+            if reach > 1e-6 && local.z / reach > 0.85 && local.z > 0.85 * front {
+                read.push((Part::Nose, step, skin));
+            }
+        }
+    }
+    let at = |part: Part, share: f32| {
+        let mut rows: Vec<(f32, f32)> = read
+            .iter()
+            .filter(|row| row.0 == part)
+            .map(|row| (row.1, row.2))
+            .collect();
+        rows.sort_by(|one, two| one.0.total_cmp(&two.0));
+        let total: f32 = rows.iter().map(|row| row.1).sum();
+        let mut run = 0.0;
+        rows.iter()
+            .find(|row| {
+                run += row.1;
+                run >= share * total
+            })
+            .map_or(f32::INFINITY, |row| row.0)
+    };
+    let reading = [
+        Part::Face,
+        Part::Mouth,
+        Part::Eyes,
+        Part::UnderTheJaw,
+        Part::BehindTheCheek,
+        Part::Sideburn,
+        Part::Scalp,
+        Part::Nape,
+    ]
+    .map(|part| (part, at(part, 0.5), at(part, 0.9)));
+    for (part, median, ninetieth) in reading {
+        println!("{part:?}: {median:.2} mm a texel at the median, {ninetieth:.2} at the ninetieth");
+    }
+    let nose = (at(Part::Nose, 0.5), at(Part::Nose, 0.99));
+    println!(
+        "Nose: {:.2} mm a texel at the median, {:.2} at the ninety-ninth",
+        nose.0, nose.1
+    );
+    let [face, mouth, eyes, under, behind, sideburn, scalp, nape] = reading;
+    assert!(
+        under.2 <= 6.0,
+        "a tenth of the skin under the jaw spans {:.1} mm a texel",
+        under.2
+    );
+    for (part, median, _) in [under, behind, sideburn, scalp, nape] {
+        assert!(
+            median <= 4.5,
+            "{part:?} spans {median:.2} mm a texel at the median"
+        );
+    }
+    assert!(
+        face.1 <= 2.0 && face.2 <= 3.8 && eyes.1 <= 2.15 && mouth.1 <= 1.75,
+        "the face spans {:.2} mm a texel at the median and {:.2} at the ninetieth, the eyes {:.2} \
+         and the mouth {:.2}",
+        face.1,
+        face.2,
+        eyes.1,
+        mouth.1
+    );
+    assert!(
+        nose.1 <= 5.0,
+        "a hundredth of the nose and the lips spans {:.2} mm a texel",
+        nose.1
+    );
+}
