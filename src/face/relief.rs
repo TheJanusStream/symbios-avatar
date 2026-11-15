@@ -272,6 +272,19 @@ const NOSE_WIDTH_NEUTRAL: f32 = 1.60;
 /// See [`NOSE_WIDTH_NEUTRAL`]. How far either side of it the axis reaches.
 const NOSE_WIDTH_SPAN: f32 = 0.80;
 
+/// How far the nose's wings reach either side of the midline at their widest,
+/// head-local metres: [`Face::nose`]'s half-width at the [`NOSE_SPREAD`] knot
+/// that is the alae. For a guard that measures a moustache against the nose
+/// it grows under (#475).
+#[cfg(test)]
+#[must_use]
+pub(crate) fn wings(canon: &Canon, params: &FaceParams) -> f32 {
+    let (along, spread) = NOSE_SPREAD[NOSE_SPREAD.len() - 1];
+    let wings = NOSE_WIDTH_NEUTRAL + NOSE_WIDTH_SPAN * (params.nose_width - 0.5) * 2.0;
+    let broad = 1.0 + (wings - 1.0) * (0.5 + 0.5 * along);
+    broad * canon.unit * spread
+}
+
 /// Carves a face into a built head, in place.
 ///
 /// Runs on the **rest** mesh, after [`super::skull::shape`] and before anything

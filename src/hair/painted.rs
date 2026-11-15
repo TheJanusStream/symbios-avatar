@@ -109,10 +109,13 @@ impl Grain {
     /// The grain one region's painted hair has.
     ///
     /// Provenance: the stubble regions are **carried** from the complexion's
-    /// retired stubble term — bare skin at the thinnest, its 0.8 reach and its
-    /// 260 cells per metre — so a beard's painted colour matches it to the bit.
-    /// The brows and the scalp are **derived** from what they are (dense hair
-    /// rather than a shave) and **tuned by render**.
+    /// retired stubble term - bare skin at the thinnest, its 0.8 reach and its
+    /// 260 cells per metre. The painter no longer reads them since #475: it
+    /// lays a beard's three regions as one cover and draws their grain as
+    /// strands along the hair's way (`texture::skin`), so these are what a
+    /// caller asking for a region's grain is handed, not what a beard's paint
+    /// is made of. The brows and the scalp are **derived** from what they are
+    /// (dense hair rather than a shave) and **tuned by render**.
     #[must_use]
     pub fn of(follicle: Follicle) -> Self {
         match follicle {
@@ -134,8 +137,11 @@ impl Grain {
                 cells: 700.0,
             },
             // Stubble, all three of them, at the term this replaced. Since #344
-            // the painter reads only its `cells` for these three - how fine a
-            // hair's grain is - and lays the paint itself as a [`Cover`].
+            // the painter lays the paint for these three as a [`Cover`], and
+            // since #475 draws their grain as strands along the hair's own way
+            // (`texture::skin`'s `STRAND_ACROSS`), so nothing here reaches a
+            // beard's paint: these are the numbers a caller reading a region's
+            // grain is handed.
             Follicle::Moustache | Follicle::Chin | Follicle::Flanks => Self {
                 shows: 1.0,
                 reach: 0.8,

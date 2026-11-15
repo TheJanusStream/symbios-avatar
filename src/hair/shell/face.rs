@@ -28,6 +28,19 @@
 //! every one of them leaves the skin once and does not enter the body again -
 //! the nose's overhang and the eyelids included - from the centres each
 //! region's column names below.
+//!
+//! # A wide moustache is width 0's here
+//!
+//! **The moustache's solid is one patch over the lip at every `width`**
+//! (#475, the owner's decision of 2026-11-15). Its ends were walked as two
+//! more solids down beside the mouth at wide widths, and the three read as
+//! planks - a band and two flat slabs - while a single solid walked round the
+//! corner would tear there as the jaw opens: below the corners the skin is the
+//! jaw's, above them the skull's. So a sculpted moustache is cut on width
+//! `0`'s outline at every width above it (`MoustacheStyle::widest`, read where
+//! the regions are cut, so the paint under it agrees), whose ends turn down to
+//! the corners' height and stop; the painted moustache and the grown styles
+//! still run down beside the mouth.
 
 use glam::{Vec2, Vec3};
 
@@ -218,6 +231,9 @@ struct Exit {
     /// How squarely the ray leaves the skin: the cosine between the ray and the
     /// skin's own normal there.
     square: f32,
+    /// Which way the skin faces there, out of the body: the triangle's own
+    /// normal, turned to the way the ray leaves.
+    normal: Vec3,
     skin: VertexSkin,
 }
 
@@ -262,6 +278,9 @@ struct Context<'a> {
     head: &'a Follicles,
     /// The head's own half-width: what thickness is sized in.
     radius: f32,
+    /// The skin round a moustache, which its stations are bound by (#475's
+    /// second fixer; see [`loft`]); `None` for every other region.
+    under: Option<&'a crate::hair::clump::SkinUnder<'a>>,
 }
 
 /// One facial patch: which plane each column lies in, what the region's rim
@@ -280,10 +299,13 @@ trait Patch {
     /// The plane of the column a share `u` across the patch's search range.
     fn plane(&self, cx: &Context, u: f32) -> Plane;
 
-    /// Whether a point on the skin is inside this patch's rim: by default where
-    /// its region's mask stands at [`RIM`].
-    fn inside(&self, cx: &Context, at: Vec3) -> bool {
-        cx.head.weight(self.follicle(), at) >= RIM
+    /// Whether a point on the skin facing `normal` is inside this patch's rim:
+    /// by default where its region's mask stands at [`RIM`].
+    ///
+    /// Asked with the skin's facing, which the moustache reads to keep the
+    /// nose's underside bare (#475); every other region ignores it.
+    fn inside(&self, cx: &Context, at: Vec3, normal: Vec3) -> bool {
+        cx.head.weight_on(self.follicle(), at, normal) >= RIM
     }
 
     /// How far past the skin the inner surface stands, in metres, at a point.
@@ -374,10 +396,17 @@ impl<'a> Skin<'a> {
         }
         let (distance, index, u, v) = best?;
         let ([a, b, c], corners) = self.triangles[index];
+        let facing = (b - a).cross(c - a).normalize_or(ray);
+        let normal = if facing.dot(ray) < 0.0 {
+            -facing
+        } else {
+            facing
+        };
         Some(Exit {
             at: centre + ray * distance,
             distance,
-            square: (b - a).cross(c - a).normalize_or(ray).dot(ray).abs(),
+            square: facing.dot(ray).abs(),
+            normal,
             skin: self.blend(corners, [1.0 - u - v, u, v]),
         })
     }
@@ -496,7 +525,7 @@ fn span(
 ) -> Option<(f32, f32)> {
     let inside = |angle: f32| {
         skin.exit(among, plane.centre, plane.ray(angle))
-            .is_some_and(|exit| patch.inside(cx, exit.at))
+            .is_some_and(|exit| patch.inside(cx, exit.at, exit.normal))
     };
     // The longest run of rays inside the rim, a run carried across a gap of
     // at most [`GAP`] rays.
@@ -623,6 +652,14 @@ fn walk(skin: &Skin, patch: &dyn Patch, cx: &Context) -> Option<Vec<Vec<Station>
         }
         walked.push(stations);
     }
+    // Bound as the skin under each station's inner surface where the region
+    // asks for it (see `loft`), before any column is added past the walked
+    // ones: a flare's tip keeps the binding of the column it is drawn from.
+    if let Some(under) = cx.under {
+        for station in walked.iter_mut().flatten() {
+            station.binding = under.at(station.inner());
+        }
+    }
     Some(patch.extend(cx, walked))
 }
 
@@ -638,6 +675,17 @@ fn walk(skin: &Skin, patch: &dyn Patch, cx: &Context) -> Option<Vec<Vec<Station>
 /// is shears with it. So the beard opens with the mouth and the moustache does
 /// not, and with the jaw open twenty degrees no vertex of any of the four is
 /// under the skin on three heads.
+///
+/// **The moustache's stations take the skin UNDER them** (#475's second
+/// fixer), the skin nearest each station's inner surface, as its cards do
+/// (`clump::SkinUnder`), rather than the skin its column's ray left, which
+/// toward the mouth's corners a ray from behind the lip meets aslant,
+/// millimetres from the skin the station stands over. Measured on the wide
+/// solid #475 first drew, whose ends ran down beside the mouth onto skin the
+/// jaw shears (withdrawn by the owner's decision: a sculpted moustache keeps
+/// width `0`'s outline, see `MoustacheStyle::widest`), bound as the ray's
+/// skin its edges grew 1.30 times past the skin under them with the jaw open
+/// 25 degrees, and 1.13 bound as this is.
 ///
 /// **A hanging chin is NOT handed over to the head along its hang**, which is
 /// what a beard's cards do and what this was built with first. Measured on the
@@ -657,9 +705,19 @@ pub(in crate::hair) fn loft(
     tips: Vec3,
 ) -> usize {
     let skin = Skin::of(bed);
+    // **A moustache's solid is bound as the skin under it**, station by
+    // station, as its cards are (#475's second fixer; `clump::SkinUnder`):
+    // every vertex of a station - both surfaces and the bevel past its rim -
+    // takes the binding of the skin nearest the station's inner surface,
+    // rather than of the skin its column's ray left, which toward the mouth's
+    // corners meets the skin aslant, millimetres from the skin under the
+    // station.
+    let under =
+        (sculpt.follicle() == Follicle::Moustache).then(|| crate::hair::clump::SkinUnder::of(bed));
     let cx = Context {
         head: bed.follicles,
         radius: head_radius(bed.follicles),
+        under: under.as_ref(),
     };
     let before = into.faces.len();
     for patch in sculpt.patches() {
@@ -978,7 +1036,7 @@ impl Patch for ChinPatch {
         }
     }
 
-    fn inside(&self, cx: &Context, at: Vec3) -> bool {
+    fn inside(&self, cx: &Context, at: Vec3, _normal: Vec3) -> bool {
         // And nothing behind the fan's own centre: past it a section has run
         // back along the side of the jaw toward the neck.
         cx.head.weight(Follicle::Chin, at) >= RIM && at.z >= cx.head.pad().front - CHIN_BACK
@@ -1048,6 +1106,15 @@ impl Patch for LipPatch {
         Follicle::Moustache
     }
 
+    /// Down to the mouth's corners' height and no lower: the outline a
+    /// sculpted moustache is cut on is width `0`'s at most, whose ends turn
+    /// down to that height and stop (#475, the owner's decision; see
+    /// `MoustacheStyle::widest`).
+    fn inside(&self, cx: &Context, at: Vec3, normal: Vec3) -> bool {
+        cx.head.weight_on(Follicle::Moustache, at, normal) >= RIM
+            && at.y >= cx.head.outline().side()
+    }
+
     /// Eleven columns by four rows, 224 triangles, and 264 with the flare's two
     /// end columns: a column every 4 to 6 mm across a 39 to 57 mm lip, and four
     /// rows over a 5 to 7 mm band that turns up to 119 degrees under the nose
@@ -1057,7 +1124,8 @@ impl Patch for LipPatch {
     }
 
     fn plane(&self, cx: &Context, u: f32) -> Plane {
-        let lip = cx.head.lip();
+        let outline = cx.head.outline();
+        let lip = outline.lip;
         let x = lip.half * (u * 2.0 - 1.0);
         // **At the rim's own floor, so no ray points down** (#349): every
         // vertex of the solid is then at least as high as the lowest point of
@@ -1066,7 +1134,12 @@ impl Patch for LipPatch {
         // the lip like every other rim's. Turned level instead, the bevel ring
         // folded back over the edge (#349, 20 to 28 edges creased, up to 180
         // degrees, all along the bottom row).
-        let floor = lip.vermilion + lip.fade * 0.5 + least(cx.radius) * BEVEL;
+        //
+        // **The column's own floor** (#475): the outline's, following the
+        // vermilion down toward the corners and no lower than the corners'
+        // height, where the ends of the outline it is cut on stop.
+        let floor =
+            outline.floor(x).max(outline.side()) + lip.fade * 0.5 + least(cx.radius) * BEVEL;
         let front = cx.head.skull().surface_at(lip.vermilion, 0.0).z;
         Plane {
             centre: Vec3::new(x, floor, front - LIP_BEHIND),
@@ -1185,7 +1258,7 @@ impl Patch for FlankPatch {
         }
     }
 
-    fn inside(&self, cx: &Context, at: Vec3) -> bool {
+    fn inside(&self, cx: &Context, at: Vec3, _normal: Vec3) -> bool {
         let reach = (at.x * at.x + at.z * at.z).sqrt();
         let facing = if reach > f32::EPSILON {
             at.z / reach

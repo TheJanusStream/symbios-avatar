@@ -416,6 +416,7 @@ mod tests {
                 lateral: 0.5,
                 facing: 1.0,
                 across,
+                normal: None,
             };
             let best = (0..2000)
                 .max_by(|one, two| {
@@ -437,6 +438,7 @@ mod tests {
                     lateral: 0.5,
                     facing: 1.0,
                     across,
+                    normal: None,
                 }) > 0.5
             });
             inside.count() as f32 * 0.00002

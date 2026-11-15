@@ -1364,7 +1364,7 @@ fn spread(index: usize) -> Vec3 {
 /// Ericson's Voronoi-region form: the six cases are the three corners, the
 /// three edges, and the interior, and testing them in this order is what makes
 /// it branch-only arithmetic with no square roots.
-fn nearest_on_triangle(point: Vec3, a: Vec3, b: Vec3, c: Vec3) -> Vec3 {
+pub(crate) fn nearest_on_triangle(point: Vec3, a: Vec3, b: Vec3, c: Vec3) -> Vec3 {
     let (ab, ac, ap) = (b - a, c - a, point - a);
     let (d1, d2) = (ab.dot(ap), ac.dot(ap));
     if d1 <= 0.0 && d2 <= 0.0 {

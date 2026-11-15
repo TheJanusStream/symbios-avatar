@@ -201,7 +201,8 @@ assert!(avatar.cloth.is_some(), "a textured outfit paints a cloth atlas");
 
 A body unwraps into charts that follow its own zones, so a chart is *named*: a
 procedural painter addresses "the chest" rather than "island 7". Two conventions
-match what character artists do by hand — the seam runs up the back, so a face is
+match what character artists do by hand - the seam runs up the back, and a
+person's face is a chart of its own, laid flat the way its skin runs, so a face is
 one unbroken island paintable as plain 2-D maths; and chart area is weighted by
 importance, so the face and hands get more texels than an equal area of forearm.
 

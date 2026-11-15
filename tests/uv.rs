@@ -425,6 +425,10 @@ enum Part {
     /// The frontmost skin of the face: the nose and the lips, which stand out
     /// of it and face the side as much as forward.
     Nose,
+    /// The flanks of the nose and the cheek beside them (#473): from the base
+    /// of the nose to just under the eyes, more than a centimetre off the
+    /// midline and within most of an eye-width of it, in the front of the face.
+    NoseFlanks,
 }
 
 /// Which [`Part`]s a head-local point is in: by the head's own landmarks, the
@@ -461,6 +465,14 @@ fn parts_at(
     if facing > 0.5 && (local.y - canon.level).abs() < 0.07 * frame {
         parts.push(Part::Eyes);
     }
+    if facing > 0.85
+        && local.y >= canon.nose_base()
+        && local.y <= canon.level - 0.1 * frame
+        && local.x.abs() > 0.010
+        && local.x.abs() < 0.8 * canon.unit
+    {
+        parts.push(Part::NoseFlanks);
+    }
     parts
 }
 
@@ -496,6 +508,29 @@ fn a_person_s_head_is_charted_as_finely_behind_and_under_it_as_its_face() {
     // paid for it. Under a nudge of libm the bodies move and these with them,
     // at most: the face 1.81, the eyes 2.03, the mouth 1.46, under the jaw 4.71
     // at the ninetieth, the scalp 3.81, the nose 4.72.
+    //
+    // **And the face a chart of its own** (#473), flattened the way it runs,
+    // with #474's packer: the face 1.32 at the median and 2.08 at the
+    // ninetieth, the eyes 1.31, the mouth 1.39, under the jaw 1.72 and 3.27,
+    // behind the cheek 2.81, at the sideburn 2.96, over the scalp 3.39, at the
+    // nape 2.87, the nose's worst hundredth 2.86. And the nose's flanks, read
+    // by every triangle: 2.17 at their worst hundredth, against 3.58 at 0.24.4
+    // and 6.65 at 0.24.5 read the same way. Under a nudge, at most: the face
+    // 1.34, the eyes 1.33, the mouth 1.41, under the jaw 3.31 at the
+    // ninetieth, the scalp 3.44, the nose 2.90, its flanks 2.21. On its
+    // fixer's charts, the face reaching up over the forehead, the crown its own
+    // and the band round the back with no hole, the face 1.37 and 1.97, the
+    // eyes 1.36, the mouth 1.37, under the jaw 1.71 and 2.88, behind the cheek
+    // 2.84, at the sideburn 2.76, over the scalp 2.86, at the nape 2.88, the
+    // nose's worst hundredth 2.81 and its flanks' 2.22; under a nudge at most
+    // the face 1.38, under the jaw 2.91 at the ninetieth, the flanks 2.22.
+    // With the mouth's band magnified, the skin under the jaw asking less, the
+    // band round the back weighted on narrow heads and the head asking more
+    // of the atlas (#473's second fixer), the face 1.46 and 2.08, the eyes
+    // 1.45, the mouth 1.23, under the jaw 1.96 and 2.88, behind the cheek 2.66,
+    // at the sideburn 2.58, over the scalp 2.62, at the nape 2.76, the nose's
+    // worst hundredth 3.17 and its flanks' 2.25; under a nudge the flanks' at
+    // most 2.32.
     let corner = |edit: fn(&mut symbios_avatar::HumanoidParams)| {
         let mut record = AvatarRecord::default();
         if let Archetype::Humanoid(params) = &mut record.archetype {
@@ -529,25 +564,37 @@ fn a_person_s_head_is_charted_as_finely_behind_and_under_it_as_its_face() {
             if uv.charts[uv.chart_of_face[index] as usize].zone != Zone::Head {
                 continue;
             }
-            let Some((_, _, finest)) = texel_reach(uv, body, face) else {
-                continue;
-            };
-            if finest <= 0.0 {
-                continue;
+            // Each face is read by its first triangle, but the nose's flanks by
+            // every triangle of every face: their polygons are fanned round
+            // the face's finer faces, and which triangle comes first there is a
+            // lottery of needles - read by the first alone, 0.24.4's flanks,
+            // which a render shows fine, came out at 14.9 mm a texel at their
+            // worst hundredth.
+            for fan in 1..face.len() - 1 {
+                let triangle = [face[0], face[fan], face[fan + 1]];
+                let Some((_, _, finest)) = texel_reach(uv, body, &triangle) else {
+                    continue;
+                };
+                if finest <= 0.0 {
+                    continue;
+                }
+                let corners = triangle.map(|v| body.positions[uv.source[v as usize] as usize]);
+                let skin = (corners[1] - corners[0])
+                    .cross(corners[2] - corners[0])
+                    .length()
+                    * 0.5;
+                let local = (corners[0] + corners[1] + corners[2]) / 3.0 - follicles.origin();
+                // The coarser step: one texel over the least the map stretches.
+                let step = 1000.0 / (finest * size);
+                for part in parts_at(&follicles, &canon, local) {
+                    if part == Part::NoseFlanks || fan == 1 {
+                        read.push((part, step, skin));
+                    }
+                }
+                if fan == 1 {
+                    ahead.push((local, step, skin));
+                }
             }
-            let corners =
-                [face[0], face[1], face[2]].map(|v| body.positions[uv.source[v as usize] as usize]);
-            let skin = (corners[1] - corners[0])
-                .cross(corners[2] - corners[0])
-                .length()
-                * 0.5;
-            let local = (corners[0] + corners[1] + corners[2]) / 3.0 - follicles.origin();
-            // The coarser step: one texel over the least the map stretches.
-            let step = 1000.0 / (finest * size);
-            for part in parts_at(&follicles, &canon, local) {
-                read.push((part, step, skin));
-            }
-            ahead.push((local, step, skin));
         }
         // The nose: skin facing within a third of the way round from straight
         // ahead, in the frontmost sixth of the head's depth - the nose and the
@@ -595,6 +642,11 @@ fn a_person_s_head_is_charted_as_finely_behind_and_under_it_as_its_face() {
         "Nose: {:.2} mm a texel at the median, {:.2} at the ninety-ninth",
         nose.0, nose.1
     );
+    let flanks = (at(Part::NoseFlanks, 0.5), at(Part::NoseFlanks, 0.99));
+    println!(
+        "NoseFlanks: {:.2} mm a texel at the median, {:.2} at the ninety-ninth",
+        flanks.0, flanks.1
+    );
     let [face, mouth, eyes, under, behind, sideburn, scalp, nape] = reading;
     assert!(
         under.2 <= 6.0,
@@ -621,4 +673,285 @@ fn a_person_s_head_is_charted_as_finely_behind_and_under_it_as_its_face() {
         "a hundredth of the nose and the lips spans {:.2} mm a texel",
         nose.1
     );
+    assert!(
+        flanks.1 <= 2.35,
+        "a hundredth of the nose's flanks spans {:.2} mm a texel",
+        flanks.1
+    );
+}
+
+/// The texels of an atlas `size` texels square that two of `triangles` cover,
+/// and the atlas area, in texels, of those laid the other way round from
+/// most of them.
+fn laid_twice(triangles: &[[symbios_avatar::Vec2; 3]], size: f32) -> (usize, f32) {
+    use symbios_avatar::Vec2;
+    let signed = |a: Vec2, b: Vec2, c: Vec2| 0.5 * (b - a).perp_dot(c - a);
+    let way: f32 = triangles.iter().map(|t| signed(t[0], t[1], t[2])).sum();
+    let flipped: f32 = triangles
+        .iter()
+        .map(|t| signed(t[0] * size, t[1] * size, t[2] * size))
+        .filter(|area| area * way < 0.0)
+        .map(f32::abs)
+        .sum();
+    let low = triangles
+        .iter()
+        .flatten()
+        .fold(Vec2::splat(f32::MAX), |low, at| low.min(*at * size))
+        .floor();
+    let high = triangles
+        .iter()
+        .flatten()
+        .fold(Vec2::splat(f32::MIN), |high, at| high.max(*at * size))
+        .ceil();
+    let (width, height) = ((high.x - low.x) as usize + 1, (high.y - low.y) as usize + 1);
+    let mut cover = vec![0u8; width * height];
+    for t in triangles {
+        let p = t.map(|at| at * size - low);
+        let area = signed(p[0], p[1], p[2]);
+        if area.abs() < 1e-12 {
+            continue;
+        }
+        let (from, to) = (p[0].min(p[1]).min(p[2]), p[0].max(p[1]).max(p[2]));
+        for y in from.y.floor() as usize..=(to.y.ceil() as usize).min(height - 1) {
+            for x in from.x.floor() as usize..=(to.x.ceil() as usize).min(width - 1) {
+                let centre = Vec2::new(x as f32 + 0.5, y as f32 + 0.5);
+                let one = signed(p[1], p[2], centre) / area;
+                let two = signed(p[2], p[0], centre) / area;
+                if one > 1e-4 && two > 1e-4 && 1.0 - one - two > 1e-4 {
+                    cover[y * width + x] = cover[y * width + x].saturating_add(1);
+                }
+            }
+        }
+    }
+    (cover.iter().filter(|&&count| count >= 2).count(), flipped)
+}
+
+#[test]
+fn a_person_s_face_is_one_island_laid_once() {
+    // **A person's face is a chart of its own, flattened the way it runs**
+    // (#473). Wrapped round the head joint, the head's one chart laid the skin
+    // that faces along the line from the axis - the flanks of the nose, the
+    // walls of the eye sockets - edge-on, and folded some of it over itself:
+    // 14 to 48 of the face's texels on these heads were two places of the skin
+    // at once, so a bilinear tap there read the other. The face's own chart
+    // lays none twice on most heads and a texel on a few - roll 4 here, where a
+    // needle at the corner of the mouth turns over - and still holds the whole
+    // face, the brows, the eyes, the nose, the mouth and the chin, in one
+    // island. Reaching up over the forehead and asking more of the mouth's
+    // band (#473's fixer), at most 2 texels laid twice and 0.79 flipped, on
+    // roll 4, and 0.83 under a nudge of libm. But off these seven bodies that
+    // band, asked of the flattening, folded the face at the mouth's corners:
+    // on the thirteen added below, up to 13 texels laid twice and 9.69 turned
+    // over (slider corner rc10), and 9 and 2.79 on roll 0, where the border
+    // by the neck crossed itself too. With the band magnified once the face is
+    // flat (`uv::MOUTH_DETAIL`) and what is still turned over relaxed out of
+    // it (`uv::unfold`'s `untangle`, #473's second fixer), none of the twenty
+    // lays a texel twice or turns one over; under a nudge of libm, slider
+    // corner rc8 - whose neck's zone takes in half its lower lip, so that the
+    // face's border runs through its mouth - lays 1 or 2 twice. With each
+    // triangle turned over laid back by its own shape before anything is
+    // relaxed (#473's third fixer), rc8, whose border crossing itself is still
+    // relaxed out, lays 3 twice, and 2 or 3 under a nudge of libm; roll 0 turns
+    // a fifth of a texel over under one; the other eighteen none.
+    let corner = |edit: fn(&mut AvatarRecord)| {
+        let mut record = AvatarRecord::default();
+        edit(&mut record);
+        record.sanitize();
+        record
+    };
+    let mut records: Vec<AvatarRecord> = [175, 237, 9, 4]
+        .into_iter()
+        .map(|seed| {
+            let mut record = AvatarRecord::default();
+            record.reroll(seed);
+            record
+        })
+        .collect();
+    records.push(corner(|record| {
+        if let Archetype::Humanoid(params) = &mut record.archetype {
+            params.head_size = -1.0;
+        }
+    }));
+    records.push(corner(|record| record.face.nose = 2.0));
+    records.push(corner(|record| record.face.mouth_width = 2.0));
+    // And the bodies #473's critics found folding the face chart at the
+    // mouth's corners, at the border by the neck, and where the neck's zone
+    // reaches the lips (#473's second fixer): rolls 0, 2, 30 and 33, the
+    // widest head, five of `slider_draws`'s sixteen slider corners and three of
+    // its twenty-four uniform draws.
+    for seed in [0, 2, 30, 33] {
+        let mut record = AvatarRecord::default();
+        record.reroll(seed);
+        records.push(record);
+    }
+    records.push(corner(|record| {
+        if let Archetype::Humanoid(params) = &mut record.archetype {
+            params.head_breadth = 3.0;
+        }
+    }));
+    let (corners, draws) = slider_draws();
+    for at in [2, 5, 8, 10, 14] {
+        records.push(corners[at].clone());
+    }
+    for at in [11, 13, 18] {
+        records.push(draws[at].clone());
+    }
+
+    let size = 1024.0;
+    let mut read = Vec::new();
+    for (index, record) in records.iter().enumerate() {
+        let avatar = symbios_avatar::Avatar::build(record).expect("a person builds");
+        let body = &avatar.parts.body;
+        let uv = &avatar.parts.unwrap;
+        let skull = symbios_avatar::face::Skull::measure(body, &avatar.rig).expect("a head");
+        let canon = symbios_avatar::Canon::measure(&avatar.rig, &skull, &record.eyes);
+        let follicles =
+            symbios_avatar::Follicles::of(&avatar.rig, &skull, &canon, &record.hair.regions);
+        // The mouth's pocket is charted apart, out of the face's rectangle.
+        let charted = |face: usize| {
+            let rect = uv.charts[uv.chart_of_face[face] as usize].rect;
+            uv.faces[face].iter().all(|&corner| {
+                let at = uv.uvs[corner as usize];
+                at.cmpge(rect.min - 1e-5).all() && at.cmple(rect.max + 1e-5).all()
+            })
+        };
+        let head = |face: usize| uv.charts[uv.chart_of_face[face] as usize].zone == Zone::Head;
+        let local = |face: usize| {
+            let corners = &uv.faces[face];
+            corners
+                .iter()
+                .map(|&corner| body.positions[uv.source[corner as usize] as usize])
+                .sum::<symbios_avatar::Vec3>()
+                / corners.len() as f32
+                - follicles.origin()
+        };
+        // The face's chart: the one the tip of the nose is in.
+        let tip = (0..uv.faces.len())
+            .filter(|&face| head(face) && charted(face))
+            .max_by(|&one, &two| local(one).z.total_cmp(&local(two).z))
+            .expect("a head");
+        let chart = uv.chart_of_face[tip];
+        // Every face between the cheeks from the chin to the brows is in it.
+        for face in (0..uv.faces.len()).filter(|&face| head(face) && charted(face)) {
+            let at = local(face);
+            let reach = (at.x * at.x + at.z * at.z).sqrt();
+            if at.x.abs() < canon.unit
+                && at.z > 0.7 * reach
+                && at.y > canon.chin() + 0.1 * canon.frame
+                && at.y < canon.level + 0.3 * canon.frame
+            {
+                assert_eq!(
+                    uv.chart_of_face[face], chart,
+                    "body {index}: the face at {at:?} is charted apart from the nose"
+                );
+            }
+        }
+        let triangles: Vec<[symbios_avatar::Vec2; 3]> = (0..uv.faces.len())
+            .filter(|&face| uv.chart_of_face[face] == chart && charted(face))
+            .flat_map(|face| {
+                let corners = &uv.faces[face];
+                (1..corners.len() - 1).map(move |fan| {
+                    [corners[0], corners[fan], corners[fan + 1]].map(|at| uv.uvs[at as usize])
+                })
+            })
+            .collect();
+        let (twice, flipped) = laid_twice(&triangles, size);
+        println!("body {index}: {twice} texels laid twice, {flipped:.2} flipped");
+        read.push((index, twice, flipped));
+    }
+    for (index, twice, flipped) in read {
+        assert!(
+            twice <= 4,
+            "body {index}: {twice} of the face's texels are laid twice"
+        );
+        assert!(
+            flipped < 1.0,
+            "body {index}: {flipped:.2} texels of the face are laid the other way round"
+        );
+    }
+}
+
+/// Sixteen slider corners, every slider at an end or the middle, and
+/// twenty-four uniform draws over the sliders' whole range, each from a fixed
+/// stream: the bodies #473's builders and critics measured the head's charts
+/// over, beside the rolls.
+fn slider_draws() -> (Vec<AvatarRecord>, Vec<AvatarRecord>) {
+    struct Stream(u64);
+    impl Stream {
+        fn next(&mut self) -> f32 {
+            self.0 = self
+                .0
+                .wrapping_mul(6_364_136_223_846_793_005)
+                .wrapping_add(1_442_695_040_888_963_407);
+            ((self.0 >> 40) as f32) / (1u64 << 24) as f32
+        }
+        fn range(&mut self, low: f32, high: f32) -> f32 {
+            low + (high - low) * self.next()
+        }
+        fn end(&mut self, low: f32, middle: f32, high: f32) -> f32 {
+            let x = self.next();
+            if x < 1.0 / 3.0 {
+                low
+            } else if x < 2.0 / 3.0 {
+                middle
+            } else {
+                high
+            }
+        }
+    }
+    let mut stream = Stream(0x5eed_c0de);
+    let mut corners = Vec::new();
+    for _ in 0..16 {
+        let mut record = AvatarRecord::default();
+        if let Archetype::Humanoid(params) = &mut record.archetype {
+            params.height = stream.range(0.0, 4.0);
+            params.shoulder_width = stream.end(-3.0, 0.0, 3.0);
+            params.hip_width = stream.end(-3.0, 0.0, 3.0);
+            params.limb_length = stream.end(-3.0, 0.0, 3.0);
+            params.neck_length = stream.end(-3.0, 0.0, 3.0);
+            params.head_size = stream.end(-3.0, 0.0, 3.0);
+            params.head_breadth = stream.end(-3.0, 0.0, 3.0);
+            params.face_length = stream.end(-3.0, 0.0, 3.0);
+            params.extremity_size = stream.end(-3.0, 0.0, 3.0);
+            params.chest_volume = stream.end(-3.0, 0.0, 3.0);
+        }
+        record.face.nose = stream.end(-1.0, 0.5, 2.0);
+        record.face.nose_width = stream.end(-1.0, 0.5, 2.0);
+        record.face.brow = stream.end(-1.0, 0.5, 2.0);
+        record.face.mouth = stream.end(-1.0, 0.5, 2.0);
+        record.face.mouth_width = stream.end(-1.0, 0.5, 2.0);
+        record.composites.mass = stream.end(-3.0, 0.0, 3.0);
+        record.composites.femininity = stream.end(-3.0, 0.0, 3.0);
+        record.sanitize();
+        corners.push(record);
+    }
+    let mut stream = Stream(0xa11_d4a5);
+    let mut draws = Vec::new();
+    for _ in 0..24 {
+        let mut record = AvatarRecord::default();
+        if let Archetype::Humanoid(params) = &mut record.archetype {
+            params.height = stream.range(0.0, 4.0);
+            params.shoulder_width = stream.range(-3.0, 3.0);
+            params.hip_width = stream.range(-3.0, 3.0);
+            params.limb_length = stream.range(-3.0, 3.0);
+            params.neck_length = stream.range(-3.0, 3.0);
+            params.head_size = stream.range(-3.0, 3.0);
+            params.head_breadth = stream.range(-3.0, 3.0);
+            params.face_length = stream.range(-3.0, 3.0);
+            params.extremity_size = stream.range(-3.0, 3.0);
+            params.chest_volume = stream.range(-3.0, 3.0);
+            params.chest_projection = stream.range(-3.0, 3.0);
+        }
+        record.face.nose = stream.range(-1.0, 2.0);
+        record.face.nose_width = stream.range(-1.0, 2.0);
+        record.face.brow = stream.range(-1.0, 2.0);
+        record.face.mouth = stream.range(-1.0, 2.0);
+        record.face.mouth_width = stream.range(-1.0, 2.0);
+        record.face.ears = stream.range(-1.0, 2.0);
+        record.composites.mass = stream.range(-3.0, 3.0);
+        record.composites.femininity = stream.range(-3.0, 3.0);
+        record.sanitize();
+        draws.push(record);
+    }
+    (corners, draws)
 }

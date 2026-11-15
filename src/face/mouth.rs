@@ -51,6 +51,33 @@ const DEPTH: f32 = 0.14;
 /// 1.05), so the seam is always under carved lip rather than bare cheek.
 const CORNERS: f32 = 0.92;
 
+/// Where the slit's corners are on a head with `params` carved into it: how
+/// far out either side of the midline, and how far below the mouth line on the
+/// midline, head-local.
+///
+/// [`open`]'s own arithmetic, for a head whose cut cannot be measured
+/// (`face::skull::Parting`): the moustache turns down at the mouth's corners
+/// (#475). The relief's mouth line dips with the square of the way out, so the
+/// corners sit that far under it.
+#[must_use]
+pub(crate) fn corners(canon: &Canon, params: &FaceParams) -> (f32, f32) {
+    let half = canon.unit * (0.6829 + 0.2376 * params.mouth_width);
+    (half * CORNERS, canon.frame * 0.0292 * CORNERS * CORNERS)
+}
+
+/// Where the lower edge of the parting sits for an upper-edge vertex at `at`,
+/// on a head whose joint is at `centre` with this `radius`: a fraction of a
+/// millimetre behind and below it.
+///
+/// One function for the cut and for anything that finds the cut again on the
+/// built surface (`face::skull::Parting`, #475): the twin is pushed at exactly
+/// this point, so a vertex with a vertex at its recess is on the upper seam.
+#[must_use]
+pub(crate) fn recessed(at: Vec3, centre: Vec3, radius: f32) -> Vec3 {
+    let inward = Vec3::new(centre.x - at.x, 0.0, centre.z - at.z).normalize_or_zero();
+    at + inward * (0.005 * radius) - Vec3::Y * (0.002 * radius)
+}
+
 /// The vertices the surgery made, by what should hold them.
 ///
 /// The seam chains run left to right and index `positions` of the mesh they
@@ -325,8 +352,7 @@ pub fn open(body: &mut PolyMesh, rig: &Rig, canon: &Canon, params: &FaceParams) 
         .iter()
         .map(|&u| {
             let at = body.positions[u as usize];
-            let inward = Vec3::new(centre.x - at.x, 0.0, centre.z - at.z).normalize_or_zero();
-            body.push_vertex(at + inward * (0.005 * radius) - Vec3::Y * (0.002 * radius))
+            body.push_vertex(recessed(at, centre, radius))
         })
         .collect();
     let twin: HashMap<u32, u32> = upper.iter().copied().zip(lower.iter().copied()).collect();

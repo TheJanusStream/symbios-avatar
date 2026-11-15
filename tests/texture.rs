@@ -467,18 +467,47 @@ fn a_person_s_ears_and_lids_take_no_painted_hair() {
 fn a_painted_scalp_is_as_grained_on_the_crown_as_behind_it() {
     // **A disc of crisp stubble on the crown** (#469's fixer). The painted
     // scalp's grain fades by how finely its texel is sampled, and a person's
-    // head chart closes on its crown, whose last rings come out two to three
+    // head chart closed on its crown, whose last rings came out two to three
     // times finer than the scalp below; so the grain drew at full strength
     // there and at half or less elsewhere, and from above a bald or shaved head
-    // wore a disc of speckle. Read on the built atlas as each texel's step from
-    // the mean of its four neighbours, in sRGB levels of luminance, over the
-    // crown (within 15 degrees of straight up from the head joint) against the
-    // back of the scalp (50 to 70 degrees down, behind the joint): the crown's
-    // over the back's, measured before the fix at 1.21, 1.71 and 1.42 on these
-    // rolls and after it at 0.98, 1.08 and 0.99.
+    // wore a disc of speckle. Since #473 the crown is a chart of its own, finer
+    // than the band round the back of the head below it, and the same disc
+    // would come back at its seam.
+    //
+    // Read as the grain itself (#473's second fixer): each texel's share of
+    // the way from the bare skin to the hair's colour, against the same body
+    // with no painted hair, which is the grain's coverage there; and the grain
+    // as how far that share strays from its mean over the crown (within 15
+    // degrees of straight up from the head joint) and over the back of the
+    // scalp (50 to 70 degrees down, behind the joint): the crown's over the
+    // back's. The fade is what the grain strays by, so this reads it whatever
+    // the atlas's steps. (It read the step to the four neighbours in sRGB
+    // luminance before, which the step itself moves: 1.01, 1.10 and 0.97 on the
+    // first three seeds, and seed 237 swung by 0.16 under a nudge of libm.)
+    // With the crown's grain drawn at its own spacing, as before #469's fixer,
+    // 1.27 to 1.51 here; floored at the band's (`texture::skin::ScalpFloor`),
+    // 0.99 to 1.08, and no more than 1.12 under a nudge of libm (seed 237).
+    // Read on the scalp's mask held whole (to a thousandth), so that what the
+    // share strays by is the grain's, not the mask's edge: over all the scalp,
+    // seed 7's back, at its hairline, strayed four times the crown's.
+    //
+    // **And the front of the scalp** (#473's third fixer): the face's chart
+    // reaches up over it to the crown's (`uv::CROWN_CUT`, here from half to
+    // seven tenths of the way up to the top of the scalp), finer than the band
+    // too, and the floor held only by its seam with the band: from above, a
+    // crisp band of speckle along the hairline, 1.33 to 1.61 times the back's
+    // here. Floored over the whole of the face's chart, 0.88 to 1.09, and no
+    // more than 1.07 under a nudge of libm; the crown 0.97 to 1.05, and 1.08.
+    // Seed 7's hairline lies above the crown's seam in front, so it has no
+    // front to read. A texel the painter left bare is skipped: an attached
+    // part drew it (#471), and this geometry of the body alone reads it as the
+    // rim of the head's chart beside it: under the nudge of libm that packs a
+    // part beside the top of seed 237's face, seven texels along that rim read
+    // no grain at all.
     let mut read = Vec::new();
-    for seed in [42, 175, 237] {
-        let (painted, _, _) = painted_and_bare(seed);
+    for seed in [42, 175, 237, 7, 9] {
+        let (painted, bare, hair) = painted_and_bare(seed);
+        let hair = glam::Vec3::from_array(hair).map(linear);
         let map = &painted.skin;
         let geometry = symbios_avatar::texture::bake_geometry(
             &painted.parts.body,
@@ -487,28 +516,41 @@ fn a_painted_scalp_is_as_grained_on_the_crown_as_behind_it() {
         );
         let joint = painted.rig.in_zone(symbios_avatar::Zone::Head)[0];
         let origin = painted.rig.joints[joint].position;
-        let width = map.width as usize;
-        let luminance = |at: usize| {
-            let rgb = &map.albedo[at * 4..at * 4 + 3];
-            0.3 * f32::from(rgb[0]) + 0.59 * f32::from(rgb[1]) + 0.11 * f32::from(rgb[2])
+        // Where the scalp's mask holds whole, so that what the share strays
+        // by is the grain's alone, not the mask's edge.
+        let mut record = AvatarRecord::new("Hair", Archetype::default());
+        record.reroll(seed);
+        record.sanitize();
+        let skull = symbios_avatar::face::Skull::measure(&painted.parts.body, &painted.rig)
+            .expect("a head");
+        let canon = symbios_avatar::Canon::measure(&painted.rig, &skull, &record.eyes);
+        let follicles =
+            symbios_avatar::Follicles::of(&painted.rig, &skull, &canon, &record.hair.regions);
+        let colour = |albedo: &[u8], at: usize| {
+            glam::Vec3::new(
+                f32::from(albedo[at * 4]),
+                f32::from(albedo[at * 4 + 1]),
+                f32::from(albedo[at * 4 + 2]),
+            )
+            .map(|level| linear(level / 255.0))
         };
-        let on_head = |at: usize| {
-            geometry.texels[at].is_some_and(|texel| texel.zone == symbios_avatar::Zone::Head)
+        let whole = |texel: &&symbios_avatar::texture::Texel| {
+            texel.zone == symbios_avatar::Zone::Head
+                && follicles.weight_in_body(symbios_avatar::Follicle::Scalp, texel.position)
+                    >= 0.999
         };
-        let (mut crown, mut back) = ((0.0f32, 0u32), (0.0f32, 0u32));
+        let top = geometry
+            .texels
+            .iter()
+            .flatten()
+            .filter(whole)
+            .map(|texel| (texel.position - origin).y)
+            .fold(0.0f32, f32::max);
+        let (mut crown, mut back, mut front) = (Vec::new(), Vec::new(), Vec::new());
         for (at, texel) in geometry.texels.iter().enumerate() {
-            let Some(texel) = texel else { continue };
-            let (x, y) = (at % width, at / width);
-            if texel.zone != symbios_avatar::Zone::Head || x == 0 || y == 0 || x + 1 >= width {
+            let Some(texel) = texel.as_ref().filter(whole) else {
                 continue;
-            }
-            let around = [at - 1, at + 1, at - width, at + width];
-            if around
-                .iter()
-                .any(|&near| near >= geometry.texels.len() || !on_head(near))
-            {
-                continue;
-            }
+            };
             let local = texel.position - origin;
             let down = local
                 .normalize_or_zero()
@@ -516,27 +558,59 @@ fn a_painted_scalp_is_as_grained_on_the_crown_as_behind_it() {
                 .clamp(-1.0, 1.0)
                 .acos()
                 .to_degrees();
-            let step = (luminance(at)
-                - around.iter().map(|&near| luminance(near)).sum::<f32>() / 4.0)
-                .abs();
+            // A texel the painter left bare under a whole mask is an attached
+            // part's (#471), which this geometry of the body alone reads as
+            // the rim of the head's chart beside it.
+            if map.albedo[at * 4..at * 4 + 3] == bare.skin.albedo[at * 4..at * 4 + 3] {
+                continue;
+            }
+            let (ours, theirs) = (colour(&map.albedo, at), colour(&bare.skin.albedo, at));
+            let toward = hair - theirs;
+            let share = (ours - theirs).dot(toward) / toward.length_squared().max(1e-6);
             if down < 15.0 {
-                crown = (crown.0 + step, crown.1 + 1);
+                crown.push(share);
             } else if (50.0..70.0).contains(&down) && local.z < 0.0 {
-                back = (back.0 + step, back.1 + 1);
+                back.push(share);
+            } else if (0.5..0.7).contains(&(local.y / top))
+                && local.z > 0.0
+                && local.x.atan2(local.z).abs() < 0.85
+            {
+                front.push(share);
             }
         }
         assert!(
-            crown.1 > 0 && back.1 > 0,
-            "seed {seed}: no crown or no back read"
+            crown.len() > 100 && back.len() > 100,
+            "seed {seed}: {} texels read on the crown, {} behind",
+            crown.len(),
+            back.len()
         );
-        let ratio = (crown.0 / crown.1 as f32) / (back.0 / back.1 as f32);
-        println!("seed {seed}: the crown's grain {ratio:.2} of the back's");
-        read.push((seed, ratio));
+        let strays = |shares: &[f32]| {
+            let mean = shares.iter().sum::<f32>() / shares.len() as f32;
+            shares.iter().map(|share| (share - mean).abs()).sum::<f32>() / shares.len() as f32
+        };
+        let ratio = strays(&crown) / strays(&back);
+        let ahead = (front.len() > 100).then(|| strays(&front) / strays(&back));
+        println!(
+            "seed {seed}: the crown's grain {ratio:.3} of the back's, the front's {ahead:.3?} \
+             over {} texels",
+            front.len()
+        );
+        read.push((seed, ratio, ahead));
     }
-    for (seed, ratio) in read {
+    assert!(
+        read.iter().filter(|(_, _, ahead)| ahead.is_some()).count() >= 4,
+        "the front of the scalp is read on fewer than four heads"
+    );
+    for (seed, ratio, ahead) in read {
         assert!(
             ratio <= 1.15,
             "seed {seed}: the crown's painted grain is {ratio:.2} of the back of the scalp's"
         );
+        if let Some(ahead) = ahead {
+            assert!(
+                ahead <= 1.15,
+                "seed {seed}: the front of the scalp's painted grain is {ahead:.2} of the back's"
+            );
+        }
     }
 }

@@ -217,15 +217,18 @@ nudge() {
             # avatar:: since #411: hashes of a built beast pinned there held on this
             # machine's glibc and on no other. The painted beard's guards since #432:
             # their margins are a hundredth or two, read on rolled bodies whose mesh
-            # moves under a nudge.
+            # moves under a nudge. The moustache's outline and its styles since #475.
+            # The tier giving up a moustache's ends first since #475's second fixer.
             (
                 guarded env SHIM_FN=all SHIM_DIR=$dir SHIM_ULPS=$ulps LD_PRELOAD="$shim" "$lib" \
                     anim:: face::beast:: uv:: texture::coat:: texture::beard_tests:: texture::bake:: \
                     plan:: record:: hair::fur:: cage:: rig::junction avatar:: \
+                    hair::follicle::moustache:: hair::style::moustache:: \
+                    hair::clump::tests::a_moustache_s_ends \
                     > "$logs/libm-$dir$ulps-lib.log" 2>&1
                 echo $? > "$results/libm-$dir$ulps-lib"
                 guarded env SHIM_FN=all SHIM_DIR=$dir SHIM_ULPS=$ulps LD_PRELOAD="$shim" "$int" \
-                    driver:: rest:: uv:: budget:: lexicon:: texture::a_beard_painted \
+                    driver:: rest:: uv:: budget:: lexicon:: texture::a_beard_painted texture::a_painted_scalp \
                     > "$logs/libm-$dir$ulps-int.log" 2>&1
                 echo $? > "$results/libm-$dir$ulps-int"
             ) &

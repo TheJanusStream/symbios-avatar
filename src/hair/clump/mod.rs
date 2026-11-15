@@ -526,10 +526,12 @@ const TIER_AIM: f32 = 0.98;
 ///
 /// Every region is grown from one stream seeded from the record's own seed, so a
 /// body grows the same hair every time it is built. If the result is over the
-/// ceiling, every region's count is scaled by what the measurement asks for and
-/// the lot is regrown from a fresh stream — regrown rather than trimmed, because
-/// dropping the last clumps of a scatter takes the hair off whichever part of the
-/// head the stream happened to visit last.
+/// ceiling, a moustache first gives up the clumps its outline adds to its
+/// style's count (see `tiered`), and then every region's count is scaled by
+/// what the measurement asks for and the lot is regrown from a fresh stream -
+/// regrown rather than trimmed, because dropping the last clumps of a scatter
+/// takes the hair off whichever part of the head the stream happened to visit
+/// last.
 #[must_use]
 pub fn grow_head(bed: &Bed, sowings: &[Sowing], seed: i64, ceiling: usize) -> Growth {
     tiered(bed, sowings, seed, ceiling).0
@@ -566,11 +568,10 @@ pub fn grow_tiers(
     seed: i64,
     ceiling: usize,
 ) -> (Growth, Growth) {
-    let (near, share) = tiered(bed, sowings, seed, ceiling);
+    let (near, counts) = tiered(bed, sowings, seed, ceiling);
     let mut stream = Pcg64Mcg::seed_from_u64(seed as u64);
     let mut growth = Growth::on(bed.follicles.head);
-    for sowing in sowings {
-        let count = counted(sowing.count, share);
+    for (sowing, &count) in sowings.iter().zip(&counts) {
         let near_tris = near
             .grown
             .iter()
@@ -601,10 +602,46 @@ pub fn grow_tiers(
     (near, growth)
 }
 
-/// [`grow_head`]'s loop, handing back the share of every region's count the
-/// tier settled on as well, so [`grow_tiers`] can replay it.
-fn tiered(bed: &Bed, sowings: &[Sowing], seed: i64, ceiling: usize) -> (Growth, f32) {
-    let mut grown = sow(bed, sowings, seed, 1.0);
+/// [`grow_head`]'s loop, handing back every region's count the tier settled
+/// on as well, so [`grow_tiers`] can replay it.
+///
+/// **A moustache's ends are given up first** (#475's second fixer). The
+/// moustache's count is its style's times the outline's multiplier
+/// (`moustache::Outline::spread_on`): the lip keeps its clumps and the ends
+/// that run down beside the mouth are paid for on top. Paid for out of the
+/// scalp's, brows' and chin's own hair by a tier that scales every region
+/// alike, a wide handlebar under a long, dense scalp cost the scalp a fifth
+/// of its clumps. So over the ceiling the moustache sheds its extra first,
+/// down to its style's own count, and only then is every region scaled - from
+/// the very counts a moustache with no extra would have asked for, so no
+/// other region is thinner for the ends than it would be without them.
+fn tiered(bed: &Bed, sowings: &[Sowing], seed: i64, ceiling: usize) -> (Growth, Vec<usize>) {
+    let mut counts: Vec<usize> = sowings.iter().map(|sowing| sowing.count).collect();
+    let mut grown = sow(bed, sowings, seed, &counts);
+    let moustache = sowings
+        .iter()
+        .position(|sowing| sowing.follicle == Follicle::Moustache);
+    if let Some(at) = moustache {
+        // The style's own count, before the multiplier the sowing carries.
+        let spread = bed.follicles.outline().spread.max(f32::EPSILON);
+        let paid = (((counts[at] as f32) / spread).round() as usize).clamp(1, counts[at].max(1));
+        for _ in 0..=TIER_PASSES {
+            let tris = grown.tris();
+            if tris <= ceiling || counts[at] <= paid {
+                break;
+            }
+            let cards = grown
+                .grown
+                .iter()
+                .find(|grown| grown.follicle == Follicle::Moustache)
+                .map_or(0, |grown| grown.tris - grown.shell);
+            let each = (cards as f32 / counts[at].max(1) as f32).max(1.0);
+            let shed = ((tris - ceiling) as f32 / each / TIER_AIM).ceil() as usize;
+            counts[at] = counts[at].saturating_sub(shed.max(1)).max(paid);
+            grown = sow(bed, sowings, seed, &counts);
+        }
+    }
+    let asked = counts.clone();
     let mut share = 1.0;
     for _ in 0..TIER_PASSES {
         let tris = grown.tris();
@@ -612,9 +649,10 @@ fn tiered(bed: &Bed, sowings: &[Sowing], seed: i64, ceiling: usize) -> (Growth, 
             break;
         }
         share *= (ceiling as f32 / tris as f32) * TIER_AIM;
-        grown = sow(bed, sowings, seed, share);
+        counts = asked.iter().map(|&count| counted(count, share)).collect();
+        grown = sow(bed, sowings, seed, &counts);
     }
-    (grown, share)
+    (grown, counts)
 }
 
 /// How many clumps a region asking for `count` roots once the tier has
@@ -631,12 +669,11 @@ fn counted(count: usize, share: f32) -> usize {
     }
 }
 
-/// Grows every region once, with each region's count scaled by `share`.
-fn sow(bed: &Bed, sowings: &[Sowing], seed: i64, share: f32) -> Growth {
+/// Grows every region once, each at its count in `counts`.
+fn sow(bed: &Bed, sowings: &[Sowing], seed: i64, counts: &[usize]) -> Growth {
     let mut stream = Pcg64Mcg::seed_from_u64(seed as u64);
     let mut growth = Growth::on(bed.follicles.head);
-    for sowing in sowings {
-        let count = counted(sowing.count, share);
+    for (sowing, &count) in sowings.iter().zip(counts) {
         growth.grow(bed, &Sowing { count, ..*sowing }, &mut stream);
     }
     growth
@@ -679,12 +716,24 @@ impl Growth {
         );
         let before = self.mesh.face_count();
         let mut clumps = 0;
+        // **A moustache lies along the skin and is bound as the skin under
+        // it** (#475): its ends run down beside the mouth onto skin the jaw
+        // carries, so a clump bound like its root and handed to the head would
+        // hang where the closed mouth was when the jaw opens. Every other
+        // region keeps the root's binding handed over to the head.
+        let under = (sowing.follicle == Follicle::Moustache && !roots.is_empty())
+            .then(|| SkinUnder::of(bed));
+        let lookup = |at: Vec3| under.as_ref().map_or_else(Default::default, |u| u.at(at));
+        let binding = match under {
+            Some(_) => loft::Binding::Under(&lookup),
+            None => loft::Binding::Over(self.head as u16),
+        };
         for root in &roots {
-            if loft::loft(
+            if loft::loft_bound(
                 &mut self.mesh,
                 root,
                 sowing.shape,
-                Some(self.head as u16),
+                &binding,
                 sowing.roots,
                 sowing.tips,
             ) > 0
@@ -763,6 +812,212 @@ impl Growth {
             });
         }
     }
+}
+
+/// The body's skin round a moustache, to bind its clumps by (#475).
+///
+/// The triangles of the head's own surface inside the moustache's outline
+/// and a margin round it, head-local, with the vertices each was cut from: a
+/// station takes the binding of the skin nearest it, **blended across the
+/// nearest triangle by where on it the nearest point falls** (#475's fixer).
+///
+/// Bound to the one nearest VERTEX, as this first was, a station took that
+/// vertex's weights whole, and two stations of one card a millimetre apart
+/// could take two vertices whose hold by the jaw differed by a fifth: beside
+/// the mouth the jaw's hold fades across the skin, and the jaw carries the
+/// skin there 30 mm and more, so as it opened the card tore - a 0.5 mm edge
+/// stretched to 11 mm on a wide chevron, whisker segments dragged down the
+/// cheek. Blended over the triangle, the binding is as continuous as the
+/// skin's own, and the card stretches no more than the skin under it does.
+///
+/// A few thousand triangles on a refined face and a grid over them, about
+/// 200 KB, held for one region's growth and dropped after it.
+pub(in crate::hair) struct SkinUnder<'a> {
+    /// Each triangle: its corners, head-local, and the body's vertices there.
+    triangles: Vec<([Vec3; 3], [u32; 3])>,
+    /// Which triangles reach into each cell of a grid [`UNDER_CELL`] on a
+    /// side, by index.
+    cells: std::collections::HashMap<[i32; 3], Vec<u32>>,
+    weights: &'a crate::rig::SkinWeights,
+}
+
+/// How far round the moustache's outline its binding skin is gathered, in
+/// metres: past the farthest a clump stands off the skin or runs past the
+/// patch.
+const UNDER_MARGIN: f32 = 0.012;
+
+/// The side of one cell of [`SkinUnder`]'s grid, in metres.
+///
+/// About the size of the refined face's own triangles, so a cell holds a
+/// handful and the three cells round a station's own each way hold the skin
+/// nearest it: a station stands a few millimetres off the skin at most.
+const UNDER_CELL: f32 = 0.004;
+
+impl<'a> SkinUnder<'a> {
+    pub(in crate::hair) fn of(bed: &Bed<'a>) -> Self {
+        let outline = bed.follicles.outline();
+        let origin = bed.follicles.origin();
+        let reach = outline.lip.half * 1.6 + UNDER_MARGIN;
+        let (low, high) = (
+            outline.bottom - UNDER_MARGIN,
+            outline.lip.nostrils + UNDER_MARGIN,
+        );
+        let held = |local: Vec3| {
+            local.z > 0.0 && local.x.abs() <= reach && local.y >= low && local.y <= high
+        };
+        let body = bed.body;
+        let mut triangles = Vec::new();
+        for corners in &body.faces {
+            if corners.len() < 3
+                || !corners
+                    .iter()
+                    .any(|corner| held(body.positions[*corner as usize] - origin))
+            {
+                continue;
+            }
+            for fan in 1..corners.len() - 1 {
+                let vertices = [corners[0], corners[fan], corners[fan + 1]];
+                triangles.push((
+                    vertices.map(|vertex| body.positions[vertex as usize] - origin),
+                    vertices,
+                ));
+            }
+        }
+        let mut cells: std::collections::HashMap<[i32; 3], Vec<u32>> =
+            std::collections::HashMap::new();
+        for (index, (corners, _)) in triangles.iter().enumerate() {
+            let (least, most) = corners.iter().fold(
+                (Vec3::splat(f32::MAX), Vec3::splat(f32::MIN)),
+                |(lo, hi), at| (lo.min(*at), hi.max(*at)),
+            );
+            let (least, most) = (cell_of(least), cell_of(most));
+            for x in least[0]..=most[0] {
+                for y in least[1]..=most[1] {
+                    for z in least[2]..=most[2] {
+                        cells.entry([x, y, z]).or_default().push(index as u32);
+                    }
+                }
+            }
+        }
+        Self {
+            triangles,
+            cells,
+            weights: bed.weights,
+        }
+    }
+
+    /// How the skin nearest a head-local point is bound: its three corners'
+    /// bindings, mixed by where on the nearest triangle the nearest point
+    /// falls.
+    pub(in crate::hair) fn at(&self, at: Vec3) -> crate::mesh::VertexSkin {
+        let nearest = |index: u32| {
+            let (corners, _) = &self.triangles[index as usize];
+            let on =
+                crate::dress::garment::nearest_on_triangle(at, corners[0], corners[1], corners[2]);
+            (on.distance_squared(at), index, on)
+        };
+        let home = cell_of(at);
+        let mut best: Option<(f32, u32, Vec3)> = None;
+        // The cells round the station's own, ring by ring; past two rings, or
+        // with nothing found that near, every triangle.
+        for ring in 1..=2i32 {
+            for x in -ring..=ring {
+                for y in -ring..=ring {
+                    for z in -ring..=ring {
+                        let Some(held) = self.cells.get(&[home[0] + x, home[1] + y, home[2] + z])
+                        else {
+                            continue;
+                        };
+                        for &index in held {
+                            let found = nearest(index);
+                            if best.is_none_or(|best| found.0 < best.0) {
+                                best = Some(found);
+                            }
+                        }
+                    }
+                }
+            }
+            let within = ring as f32 * UNDER_CELL;
+            if best.is_some_and(|(distance, _, _)| distance <= within * within) {
+                break;
+            }
+            best = None;
+        }
+        let best = best.or_else(|| {
+            (0..self.triangles.len() as u32)
+                .map(nearest)
+                .min_by(|one, two| one.0.total_cmp(&two.0))
+        });
+        let Some((_, index, on)) = best else {
+            return Default::default();
+        };
+        let (corners, vertices) = &self.triangles[index as usize];
+        let shares = barycentric(on, corners);
+        mixed(
+            vertices.map(|vertex| &self.weights.vertices[vertex as usize]),
+            shares,
+        )
+    }
+}
+
+/// The cell of [`SkinUnder`]'s grid a head-local point falls in.
+fn cell_of(at: Vec3) -> [i32; 3] {
+    (at / UNDER_CELL).floor().to_array().map(|part| part as i32)
+}
+
+/// Where a point on a triangle falls, as its three corners' shares.
+///
+/// The point is on the triangle (the nearest point to a station), so the
+/// shares are each in `0..=1`; a triangle with no area answers its first
+/// corner.
+pub(in crate::hair) fn barycentric(on: Vec3, [a, b, c]: &[Vec3; 3]) -> [f32; 3] {
+    let (ab, ac, ap) = (*b - *a, *c - *a, on - *a);
+    let (d00, d01, d11) = (ab.dot(ab), ab.dot(ac), ac.dot(ac));
+    let (d20, d21) = (ap.dot(ab), ap.dot(ac));
+    let det = d00 * d11 - d01 * d01;
+    if det <= f32::EPSILON * d00.max(d11).max(f32::MIN_POSITIVE) {
+        return [1.0, 0.0, 0.0];
+    }
+    let v = ((d11 * d20 - d01 * d21) / det).clamp(0.0, 1.0);
+    let w = ((d00 * d21 - d01 * d20) / det).clamp(0.0, 1.0 - v);
+    [1.0 - v - w, v, w]
+}
+
+/// Three bindings mixed by `shares`: each joint's weight in each, summed, and
+/// the strongest a vertex may carry kept, summing to one.
+fn mixed(skins: [&crate::mesh::VertexSkin; 3], shares: [f32; 3]) -> crate::mesh::VertexSkin {
+    let mut held = [(0u16, 0.0f32); 3 * crate::rig::skin::MAX_INFLUENCES];
+    let mut count = 0usize;
+    for (skin, share) in skins.into_iter().zip(shares) {
+        for influence in skin.iter().filter(|influence| influence.weight > 0.0) {
+            let weight = influence.weight * share;
+            match held[..count]
+                .iter_mut()
+                .find(|(joint, _)| *joint == influence.joint)
+            {
+                Some((_, sum)) => *sum += weight,
+                None => {
+                    held[count] = (influence.joint, weight);
+                    count += 1;
+                }
+            }
+        }
+    }
+    let held = &mut held[..count];
+    held.sort_by(|one, two| two.1.total_cmp(&one.1).then(one.0.cmp(&two.0)));
+    let kept = &held[..count.min(crate::rig::skin::MAX_INFLUENCES)];
+    let total: f32 = kept.iter().map(|(_, weight)| weight).sum();
+    let mut skin = crate::mesh::VertexSkin::default();
+    if total <= f32::EPSILON {
+        return skin;
+    }
+    for (slot, (joint, weight)) in kept.iter().enumerate() {
+        skin[slot] = crate::rig::Influence {
+            joint: *joint,
+            weight: weight / total,
+        };
+    }
+    skin
 }
 
 /// How far a clump stands its root off the skin, in metres.
@@ -1418,6 +1673,136 @@ mod tests {
                 .iter()
                 .map(|grown| grown.follicle.name())
                 .collect::<Vec<_>>()
+        );
+    }
+    #[test]
+    fn a_moustache_s_ends_are_given_up_before_any_other_region_is_thinned() {
+        // **The tier thinned the whole head for a wide moustache's ends**
+        // (#475's second fixer). A grown moustache's count is its style's
+        // times the outline's multiplier, which pays for the ends that run
+        // down beside the mouth on top of the lip (`moustache::Outline::
+        // spread_on`); scaling every region alike, a tier over the ceiling
+        // took those ends out of the scalp, the brows and the chin. So under
+        // a dense, long scalp, a full chin and full flanks - a head the tier
+        // bites on - a horseshoe handlebar and the same head with the
+        // moustache at its style's own count grow the same scalp and brows,
+        // clump for clump, and the moustache keeps at least its style's count.
+        //
+        // Measured: on the default face 63 scalp and 37 brow clumps both ways,
+        // the moustache 107 clumps against its style's 78, the head 3,282
+        // triangles tiered against 3,586 asked for. Before, the tier took the
+        // scalp to 54 clumps and the brows to 30 (3,834 triangles asked).
+        use crate::hair::{
+            ChinStyle, Cut, FlankStyle, HairRecord, MoustacheStyle, ScalpStyle, Tress,
+        };
+        let full = Cut {
+            length: 1.0,
+            droop: 1.0,
+            density: 1.0,
+            thickness: 1.0,
+        };
+        let mut record = AvatarRecord::new("Tiered", Archetype::default());
+        record.sanitize();
+        let avatar = Avatar::build_for_shape(&record).expect("a biped builds");
+        let skull = Skull::measure(&avatar.parts.body, &avatar.rig).expect("a head measures");
+        let canon = Canon::measure(&avatar.rig, &skull, &record.eyes);
+        let mut hair = HairRecord::bald();
+        hair.regions.moustache.width = 1.0;
+        hair.scalp = Tress {
+            style: ScalpStyle::Long { weight: 0.5 },
+            cut: full,
+            ..Default::default()
+        };
+        hair.brows = record.hair.brows;
+        hair.brows.cut = full;
+        hair.chin = Tress {
+            style: ChinStyle::Full,
+            cut: full,
+            ..Default::default()
+        };
+        hair.flanks = Tress {
+            style: FlankStyle::FullConnect { reach: 1.0 },
+            cut: full,
+            ..Default::default()
+        };
+        hair.moustache = Tress {
+            style: MoustacheStyle::Handlebar { sweep: 0.6 },
+            cut: full,
+            ..Default::default()
+        };
+        let follicles = Follicles::of(&avatar.rig, &skull, &canon, &hair.regions);
+        let bed = Bed {
+            body: &avatar.parts.body,
+            rig: &avatar.rig,
+            weights: &avatar.parts.weights,
+            follicles: &follicles,
+        };
+        let sown: Vec<_> = Follicle::ALL
+            .into_iter()
+            .filter_map(|follicle| {
+                hair.sowing(follicle, &follicles)
+                    .map(|sown| (follicle, sown))
+            })
+            .collect();
+        let spread = follicles.outline().spread;
+        let style_count =
+            |sown: &crate::hair::style::Sown| ((sown.clumps as f32) / spread).round() as usize;
+        let sowings = |paid: bool| -> Vec<Sowing> {
+            sown.iter()
+                .map(|(follicle, sown)| Sowing {
+                    follicle: *follicle,
+                    count: if paid && *follicle == Follicle::Moustache {
+                        style_count(sown)
+                    } else {
+                        sown.clumps
+                    },
+                    shape: sown.shape.as_ref(),
+                    roots: Vec3::from_array(sown.roots),
+                    tips: Vec3::from_array(sown.tips),
+                })
+                .collect()
+        };
+        let asked = grow_head(&bed, &sowings(false), record.seed, usize::MAX);
+        let tiered = grow_head(&bed, &sowings(false), record.seed, MAX_TRIANGLES);
+        let plain = grow_head(&bed, &sowings(true), record.seed, MAX_TRIANGLES);
+        let clumps = |growth: &Growth, follicle: Follicle| {
+            growth
+                .grown
+                .iter()
+                .find(|grown| grown.follicle == follicle)
+                .map_or(0, |grown| grown.clumps)
+        };
+        let paid = sown
+            .iter()
+            .find(|(follicle, _)| *follicle == Follicle::Moustache)
+            .map_or(0, |(_, sown)| style_count(sown));
+        println!(
+            "asked {} triangles, tiered {}: scalp {} / {}, brows {} / {}, moustache {} of its \
+             style's {paid}",
+            asked.tris(),
+            tiered.tris(),
+            clumps(&tiered, Follicle::Scalp),
+            clumps(&plain, Follicle::Scalp),
+            clumps(&tiered, Follicle::Brows),
+            clumps(&plain, Follicle::Brows),
+            clumps(&tiered, Follicle::Moustache),
+        );
+        assert!(
+            asked.tris() > MAX_TRIANGLES && spread > 1.5,
+            "this head no longer asks for more than the ceiling ({} triangles, a multiplier of \
+             {spread:.2}): it tests nothing",
+            asked.tris()
+        );
+        for follicle in [Follicle::Scalp, Follicle::Brows] {
+            assert_eq!(
+                clumps(&tiered, follicle),
+                clumps(&plain, follicle),
+                "the tier thinned the {follicle:?} for a moustache's ends"
+            );
+        }
+        assert!(
+            clumps(&tiered, Follicle::Moustache) >= paid,
+            "the tier took the moustache under its style's own count"
         );
     }
 }

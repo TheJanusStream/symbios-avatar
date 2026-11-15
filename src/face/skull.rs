@@ -3878,6 +3878,330 @@ pub struct Skull {
     behind: [f32; BANDS],
     front: [[f32; COLUMNS]; BANDS],
     side: [[f32; DEPTHS]; BANDS],
+    /// The mouth's parting where one has been cut (#475): see [`Parting`].
+    parting: Option<Parting>,
+    /// How far out the nose's underside reaches either side of the midline,
+    /// where it was found (#475's fixer): see [`nose_under`].
+    nose: Option<f32>,
+    /// Where the nose's underside begins over the upper lip, column by
+    /// column (#475's second fixer): see [`Crease`].
+    crease: Option<Crease>,
+}
+
+/// The mouth's parting as it was cut, measured off the built surface (#475).
+///
+/// **Measured, because nothing that cuts the hair's regions knows the mouth's
+/// width.** The record's mouth width is a face axis the follicle regions are
+/// never handed, and a moustache that turns down at the mouth's corners has to
+/// know where they are: a canon guess is out by the whole axis, a half-mouth of
+/// 0.45 to 1.16 eye-widths over the explored range. The cut leaves its mark on
+/// the surface: every vertex of the upper seam has a twin at exactly its
+/// recess (`face::mouth::recessed`), the lower seam's, and nothing else on a
+/// head does. The corners are the outermost such pair - the welds, single
+/// vertices, lie one edge further out.
+///
+/// Head-local metres, like every other landmark here. `None` on a head the
+/// mouth was not cut into: a beast's, a skull measured before the cut, or a
+/// body whose parting found no clean chain.
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub(crate) struct Parting {
+    /// How far out the cut reaches either side of the midline.
+    pub corner: f32,
+    /// The upper seam's height on the midline.
+    pub middle: f32,
+    /// Its height at the corners.
+    pub side: f32,
+}
+
+/// How far out the nose's underside reaches, found on a built head (#475's
+/// fixer): see [`Skull::nose_under`].
+///
+/// **Read off the skin's facing**, the one thing that tells a nose from a lip
+/// at the heights a moustache grows: the underside of the nose and its wings
+/// faces the ground (normal `y` -0.47 to -0.94 measured, #475) and the lip
+/// under it faces forward and up. So among the faces in front of the head,
+/// between a tenth and two fifths of a head radius over the mouth's parting
+/// on its midline - over the upper lip's own rounded underside, under the
+/// eyes - the widest that faces the ground more than [`NOSE_FACING`], read out
+/// from the midline while they run on with no gap wider than [`NOSE_GAP`], is
+/// the nose's wing. The face's centroid, so one stray vertex does not decide
+/// it; `None` where none faces so on the midline, which a nose always does.
+fn nose_under(mesh: &PolyMesh, centre: Vec3, radius: f32, parting: &Parting) -> Option<f32> {
+    let (low, high) = (parting.middle + 0.1 * radius, parting.middle + 0.4 * radius);
+    let mut out = Vec::new();
+    for corners in &mesh.faces {
+        if corners.len() < 3 {
+            continue;
+        }
+        let at = |corner: usize| mesh.positions[corners[corner] as usize] - centre;
+        let middle = corners
+            .iter()
+            .map(|corner| mesh.positions[*corner as usize] - centre)
+            .sum::<Vec3>()
+            / corners.len() as f32;
+        if middle.z <= 0.0 || middle.y < low || middle.y > high || middle.x.abs() > 0.5 * radius {
+            continue;
+        }
+        let Some(normal) = (at(1) - at(0)).cross(at(2) - at(0)).try_normalize() else {
+            continue;
+        };
+        if normal.y < NOSE_FACING {
+            out.push(middle.x.abs());
+        }
+    }
+    // Out from the midline and no farther than the facing runs on unbroken:
+    // the cheeks' own folds face down here and there well past the nose.
+    out.sort_by(f32::total_cmp);
+    let mut widest = None;
+    for x in out {
+        if widest.map_or(x, |widest: f32| x - widest) > NOSE_GAP * radius {
+            break;
+        }
+        widest = Some(x);
+    }
+    widest
+}
+
+/// Where the nose's underside begins over the upper lip, measured on a built
+/// head column by column across the nose (#475's second fixer).
+///
+/// **Told from the lip by the skin's facing**, as [`nose_under`] tells the
+/// nose's width: the lip faces forward and up, the crease where it meets the
+/// nose faces the ground a little, and the underside faces it steeply (normal
+/// `y` -0.80 to -0.94 on the midline). In each column, the lowest point over
+/// the lip, between [`nose_under`]'s heights, where the shading normal turns
+/// to face the ground more than [`CREASE_FACING`] - read along the mesh's
+/// edges, between their two ends' normals - is where the underside begins
+/// there. Shading normals, blended along an edge, because they are what the
+/// atlas's texels are shaded and painted by.
+///
+/// **Not the canon's nose foot.** That landmark (`Canon::nose_foot`) is where
+/// the nose's RELIEF ends, and the skin under it is not lip on every face: on
+/// seed 175's face the underside begins 0.9 mm over it, on seed 237's small
+/// nose 2.1 mm over it, so a moustache whose ceiling is the foot leaves a
+/// third of 237's lip bare.
+///
+/// Columns [`CREASE_STEP`] of the head's radius wide, from the midline out to
+/// the nose's wings; head-local metres. A column with no such crossing reads
+/// as its nearest neighbour that has one.
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub(crate) struct Crease {
+    /// How wide each column is, in metres.
+    step: f32,
+    /// The lowest down-facing height in each column; `NaN` where none.
+    heights: [f32; CREASE_COLUMNS],
+    /// How many columns, from the midline, reach the nose's wings.
+    columns: usize,
+}
+
+impl Crease {
+    /// Measures it: see [`Crease`].
+    fn of(mesh: &PolyMesh, centre: Vec3, radius: f32, parting: &Parting, wings: f32) -> Self {
+        let (low, high) = (parting.middle + 0.1 * radius, parting.middle + 0.4 * radius);
+        let step = CREASE_STEP * radius;
+        let columns = ((wings / step).ceil() as usize + 1).clamp(1, CREASE_COLUMNS);
+        let reach = columns as f32 * step;
+        let within = |at: Vec3| at.z > 0.0 && at.y >= low && at.y <= high && at.x.abs() < reach;
+        // The shading normals the mesh carries, or where it carries none the
+        // ones `PolyMesh::vertex_normals` would give - each face's plane
+        // weighed by the angle it subtends at the corner - gathered for the
+        // vertices near the lip alone: a whole body's normals are not worth a
+        // build's allocation for this.
+        let carried = mesh.normals.len() == mesh.positions.len();
+        let mut gathered: std::collections::HashMap<u32, Vec3> = std::collections::HashMap::new();
+        if !carried {
+            for face in &mesh.faces {
+                if face.len() < 3
+                    || !face
+                        .iter()
+                        .any(|corner| within(mesh.positions[*corner as usize] - centre))
+                {
+                    continue;
+                }
+                let anchor = mesh.positions[face[0] as usize];
+                let Some(plane) = (1..face.len() - 1)
+                    .map(|corner| {
+                        (mesh.positions[face[corner] as usize] - anchor)
+                            .cross(mesh.positions[face[corner + 1] as usize] - anchor)
+                    })
+                    .sum::<Vec3>()
+                    .try_normalize()
+                else {
+                    continue;
+                };
+                let corners = face.len();
+                for (corner, &index) in face.iter().enumerate() {
+                    let here = mesh.positions[index as usize];
+                    let before = mesh.positions[face[(corner + corners - 1) % corners] as usize];
+                    let after = mesh.positions[face[(corner + 1) % corners] as usize];
+                    let angle = match (
+                        (before - here).try_normalize(),
+                        (after - here).try_normalize(),
+                    ) {
+                        (Some(back), Some(forth)) => back.dot(forth).clamp(-1.0, 1.0).acos(),
+                        _ => 0.0,
+                    };
+                    *gathered.entry(index).or_insert(Vec3::ZERO) += plane * angle;
+                }
+            }
+        }
+        let normal_of = |vertex: u32| {
+            if carried {
+                mesh.normals[vertex as usize].try_normalize()
+            } else {
+                gathered
+                    .get(&vertex)
+                    .and_then(|normal| normal.try_normalize())
+            }
+        };
+        // Along every edge whose two ends face either side of the bound, where
+        // the facing crosses it as the texels between them are shaded: a
+        // texel's normal is its corners' blended, so the lowest crossing is
+        // the lowest the shaded skin faces the ground that steeply.
+        let mut heights = [f32::NAN; CREASE_COLUMNS];
+        for face in &mesh.faces {
+            if face.len() < 3
+                || !face
+                    .iter()
+                    .any(|corner| within(mesh.positions[*corner as usize] - centre))
+            {
+                continue;
+            }
+            for (corner, &one) in face.iter().enumerate() {
+                let two = face[(corner + 1) % face.len()];
+                let (Some(first), Some(second)) = (normal_of(one), normal_of(two)) else {
+                    continue;
+                };
+                if (first.y < CREASE_FACING) == (second.y < CREASE_FACING) {
+                    continue;
+                }
+                let share = ((CREASE_FACING - first.y) / (second.y - first.y)).clamp(0.0, 1.0);
+                let at =
+                    mesh.positions[one as usize].lerp(mesh.positions[two as usize], share) - centre;
+                if !within(at) {
+                    continue;
+                }
+                let column = (at.x.abs() / step) as usize;
+                if column < columns && (heights[column].is_nan() || at.y < heights[column]) {
+                    heights[column] = at.y;
+                }
+            }
+        }
+        Self {
+            step,
+            heights,
+            columns,
+        }
+    }
+
+    /// Where the underside begins at `x` across, in head-local metres, read
+    /// between the columns' middles; `None` past the last column, or where no
+    /// column found it.
+    #[must_use]
+    pub(crate) fn at(&self, x: f32) -> Option<f32> {
+        let height = |column: usize| {
+            (0..self.columns).find_map(|reach| {
+                [column.checked_sub(reach), Some(column + reach)]
+                    .into_iter()
+                    .flatten()
+                    .filter(|&near| near < self.columns)
+                    .map(|near| self.heights[near])
+                    .find(|near| near.is_finite())
+            })
+        };
+        let along = (x.abs() / self.step - 0.5).max(0.0);
+        if x.abs() >= self.columns as f32 * self.step {
+            return None;
+        }
+        let below = (along.floor() as usize).min(self.columns - 1);
+        let above = (below + 1).min(self.columns - 1);
+        let share = (along - below as f32).clamp(0.0, 1.0);
+        let (one, two) = (height(below)?, height(above)?);
+        Some(one + (two - one) * share)
+    }
+}
+
+/// How wide each of [`Crease`]'s columns is, as a share of the head's radius:
+/// about 2.5 mm, three or four of the refined face's triangles.
+///
+/// Provenance: **derived** from the face's refinement.
+const CREASE_STEP: f32 = 0.02;
+
+/// The most columns [`Crease`] keeps: past a big nose's wings, 50 mm out on
+/// the largest head.
+///
+/// Provenance: **derived** from the widest nose the record carves.
+const CREASE_COLUMNS: usize = 20;
+
+/// How steeply a vertex must look at the ground to be read as the nose's
+/// underside by [`Crease`]: the vertical part of its normal.
+///
+/// The bound `texture::beard_tests`' nose guard reads the underside by, so a
+/// moustache whose ceiling is this line keeps off what that guard reads; the
+/// crease under it faces -0.45 to -0.6, and is the moustache's.
+///
+/// Provenance: **measured** (#475's second fixer).
+const CREASE_FACING: f32 = -0.6;
+
+/// The widest gap across the nose's underside [`nose_under`] reads on through,
+/// as a share of the head's radius: about the refined face's own triangles.
+///
+/// Provenance: **derived** from the face's refinement.
+const NOSE_GAP: f32 = 0.04;
+
+/// How steeply a face must look at the ground to be read as the nose's
+/// underside by [`nose_under`]: the vertical part of its normal.
+///
+/// Provenance: **measured** (#475): the nose's underside and its wings face
+/// -0.47 to -0.94, the cutaneous lip under them +0.09 to +0.74.
+const NOSE_FACING: f32 = -0.45;
+
+/// The fewest seam pairs a parting is believed from.
+///
+/// A real cut has a hundred or more along its chain (113 to 151 on the rolls
+/// measured for #475); a stray coincidence or two is not a mouth.
+const PARTING_LEAST: usize = 12;
+
+/// Finds the mouth's parting in a built head: see [`Parting`].
+///
+/// Only the front of the lower face is searched - in front of the joint and
+/// between a fifth of a head radius and a whole one below it - so nothing
+/// elsewhere on a body can be read as the mouth.
+fn parting(mesh: &PolyMesh, centre: Vec3, radius: f32) -> Option<Parting> {
+    let searched = |point: &Vec3| {
+        let local = *point - centre;
+        local.z > 0.0 && local.y < -0.2 * radius && local.y > -radius && local.x.abs() < radius
+    };
+    let key = |point: Vec3| point.to_array().map(f32::to_bits);
+    let held: std::collections::HashSet<[u32; 3]> = mesh
+        .positions
+        .iter()
+        .filter(|point| searched(point))
+        .map(|point| key(*point))
+        .collect();
+    let seam: Vec<Vec3> = mesh
+        .positions
+        .iter()
+        .filter(|point| searched(point))
+        .filter(|point| held.contains(&key(crate::face::mouth::recessed(**point, centre, radius))))
+        .map(|point| *point - centre)
+        .collect();
+    if seam.len() < PARTING_LEAST {
+        return None;
+    }
+    let outermost = seam
+        .iter()
+        .copied()
+        .max_by(|one, two| one.x.abs().total_cmp(&two.x.abs()))?;
+    let middle = seam
+        .iter()
+        .copied()
+        .min_by(|one, two| one.x.abs().total_cmp(&two.x.abs()))?;
+    Some(Parting {
+        corner: outermost.x.abs(),
+        middle: middle.y,
+        side: outermost.y,
+    })
 }
 
 impl Skull {
@@ -4007,6 +4331,9 @@ impl Skull {
             spread(row, across[band]);
         }
 
+        let radius = rig.joints[head].radius;
+        let parting = parting(mesh, centre, radius);
+        let nose = parting.and_then(|parting| nose_under(mesh, centre, radius, &parting));
         Some(Self {
             head,
             lo,
@@ -4017,7 +4344,35 @@ impl Skull {
             behind,
             front,
             side,
+            parting,
+            nose,
+            crease: parting
+                .zip(nose)
+                .map(|(parting, wings)| Crease::of(mesh, centre, radius, &parting, wings)),
         })
+    }
+
+    /// How far out the nose's underside reaches either side of the midline, in
+    /// head-local metres, where a mouth was cut and a nose found over it
+    /// (#475's fixer): the half-width of the nostrils' wings as the face was
+    /// carved, which a Chaplin moustache is as wide as.
+    #[must_use]
+    pub(crate) fn nose_under(&self) -> Option<f32> {
+        self.nose
+    }
+
+    /// Where the nose's underside begins over the upper lip, column by column,
+    /// where a mouth was cut and a nose found over it (#475's second fixer):
+    /// see [`Crease`].
+    #[must_use]
+    pub(crate) fn crease(&self) -> Option<Crease> {
+        self.crease
+    }
+
+    /// The mouth's parting, where one has been cut into this head (#475).
+    #[must_use]
+    pub(crate) fn parting(&self) -> Option<Parting> {
+        self.parting
     }
 
     /// How far the skull reaches sideways at `height`, in head-local metres.

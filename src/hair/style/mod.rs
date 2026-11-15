@@ -540,6 +540,20 @@ impl HairRecord {
         }
     }
 
+    /// The regions this record's hair is grown and painted on: its own
+    /// [`Self::regions`], with the moustache's `width` held to what its style
+    /// is drawn at (see [`MoustacheStyle::widest`]).
+    ///
+    /// Read on the way to the regions, as [`Self::painted`] is on the way to
+    /// the painter, so the solid and the paint under it share one outline;
+    /// nothing on the wire changes.
+    #[must_use]
+    pub(crate) fn grown_regions(&self) -> FollicleParams {
+        let mut regions = self.regions;
+        regions.moustache.width = regions.moustache.width.min(self.moustache.style.widest());
+        regions
+    }
+
     /// What one region grows: its shape, how many clumps, and its two colours.
     ///
     /// `None` where the region grows no geometry, which is what a painted-only
@@ -566,9 +580,13 @@ impl HairRecord {
                 self.brows.roots,
                 self.brows.tips,
             ),
+            // **The moustache's count furnishes its lip, and its ends are paid
+            // for on top** (#475): see `Outline::spread_on`. The ends that turn
+            // down past the corners would otherwise take their roots from the
+            // lip, a region's count being fixed whatever its area.
             Follicle::Moustache => (
                 self.moustache.shape(follicle, head),
-                self.moustache.clumps(follicle),
+                ((self.moustache.clumps(follicle) as f32) * head.outline().spread).round() as usize,
                 self.moustache.roots,
                 self.moustache.tips,
             ),

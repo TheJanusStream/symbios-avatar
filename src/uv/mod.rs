@@ -41,22 +41,30 @@
 //! it is wrapped round its own bones instead (#397), from the root to the tip
 //! with the seam along its underside (`TailChain`).
 //!
-//! A person's head is the last (#469). Wrapped round its vertices' centroid,
-//! which its refined face pulls to just behind the lips, its back came out six
-//! to eight millimetres a texel round the head and the plane under its chin,
-//! which faces down the neck, up to thirty. So it is wrapped round the head
-//! joint, its height counts the skin drawing in under the jaw as a beast's
-//! does, its face is seen from in front of the joint so the nose's flanks keep
-//! their texels, and it asks for the same share of the atlas as before, in its
-//! own shape (`PersonHead`).
+//! A person's head is the last (#469, #473). Wrapped round its vertices'
+//! centroid, which its refined face pulls to just behind the lips, its back came
+//! out six to eight millimetres a texel round the head and the plane under its
+//! chin, which faces down the neck, up to thirty. So it is wrapped round the
+//! head joint, its height counts the skin drawing in under the jaw as a beast's
+//! does, and it asks for nearly the same share of the atlas as before
+//! (`PersonHead`, `PERSON_HEAD_SHARE`).
+//! But its face is a chart of its own, flattened the way its skin runs rather
+//! than seen from anywhere (`unfold`): wrapped round anything, the sides of
+//! the nose and the walls of the eye sockets face along the line they are seen
+//! from. The face is still one island, the brows, eyes, nose, mouth, chin and
+//! hairline all inside it, with its border in front of the ears and up over
+//! the temples, and its lowest edge the head's own, at the neck. Its crown is
+//! a chart of its own flattened the same way, and the rest of the head is a
+//! band wrapped round the joint with its seam in the face's place.
 //!
 //! Unwrapping duplicates vertices — at chart boundaries, and along each chart's
 //! seam — so the result carries its own vertex list with a [`UvUnwrap::source`]
 //! index back into the mesh it came from.
 
 mod pack;
+mod unfold;
 
-use glam::{Vec2, Vec3};
+use glam::{DVec2, Vec2, Vec3};
 use std::collections::{BTreeMap, HashMap, VecDeque};
 
 use crate::mesh::PolyMesh;
@@ -241,7 +249,7 @@ pub fn unwrap_with(
     config: &UvConfig,
     extra: &[Vec2],
 ) -> (UvUnwrap, Vec<Rect>) {
-    unwrap_framed(mesh, rig, zones, config, extra, None)
+    unwrap_framed(mesh, rig, zones, config, extra, None, &[])
 }
 
 /// What a beast's charts ask that a person's do not (#395).
@@ -300,9 +308,10 @@ impl BeastCharts {
     }
 }
 
-/// What a person's head chart asks that every other chart does not (#469).
+/// What a person's head charts ask that every other chart does not (#469,
+/// #473).
 ///
-/// **Its axis runs through the head joint.** A chart wraps round the bone
+/// **The head is wrapped round the head joint.** A chart wraps round the bone
 /// entering its zone, through the centroid of its own vertices; a person's face
 /// is refined ten times over where the vault is not, so that centroid stood
 /// some 70 mm in front of the head joint, behind the lips, and the wrap's axis
@@ -311,232 +320,649 @@ impl BeastCharts {
 /// the sideburn, over the scalp and at the nape a texel spanned six to eight
 /// millimetres round the head while its rows stood under one apart, and the
 /// hairline behind the ear and a beard's edge stepped. Round the head's own
-/// axis every part of the head has its share of the way round, and the face
-/// takes its extra columns from the density warp ([`PERSON_FOLLOW_ROUND`]).
-/// The axis now leaves the head at the crown, whose cap is flattened down it as
-/// a chart of its own, as every cap is.
+/// axis every part of the head has its share of the way round.
 ///
 /// **Its height counts the skin under the jaw.** That skin faces down the neck,
 /// and by height alone it came out at a few rows, up to thirty millimetres a
 /// texel on the plane under the chin. Below the head's waist the height counts
 /// how far the skin has drawn in toward the axis as well, as a beast's does
-/// ([`along_the_skin`]); above it only the crown's last rings count
-/// ([`CROWN_CLOSING`]).
+/// ([`along_the_skin`]); above it only the last rings below the crown's chart
+/// count ([`CROWN_CLOSING`]).
 ///
-/// **Its face is seen from in front of the joint.** Round the joint, the skin
-/// that stands out of the face and faces the side, the flanks of the nose and
-/// the edges of the philtrum, runs nearly along the line from the axis, so the
-/// angle round the head is read from a point brought forward toward the face
-/// as the skin comes round to the front ([`FrontView`]).
+/// **Its face is a chart of its own** (#473). Round the joint, the skin that
+/// stands out of the face and faces the side - the flanks of the nose, the
+/// wings of the nostrils, the edges of the philtrum, the walls of the eye
+/// sockets - runs nearly along the line from the axis, and a step along it
+/// barely turns the angle: the side of the nose came out whole triangles to a
+/// texel, fifteen millimetres one way at its worst hundredth where the chart
+/// before #469 had spent two. Seeing the face from a point brought forward
+/// toward it mended the nose's front and not its flanks, and no one point sees
+/// skin that faces every way. So the face, the skin in front of the ears
+/// ([`FACE_SIDE`]) from the head's own edge at the neck up over the forehead
+/// and the front of the scalp, is flattened the way it runs ([`unfold`]). The
+/// face is the largest island of that skin, and a head whose largest island is
+/// too small to be a face keeps it in its wrap ([`FACE_LEAST`]).
 ///
-/// **It asks for the area it always did, in its own shape.** Its area is asked
-/// for as before, round its vertices' centroid and by its extent along the
-/// axis, less what its cap asks, so the head takes from the atlas what it
-/// always took; but in the shape of the skin it covers round the joint
-/// ([`PERSON_HEAD_ASPECT`]), not the old chart's, which was less than half as
-/// wide for its height. A rectangle of another shape lies in the shelf packer's
-/// shelves another way, so every other chart moves with it: measured by #469's
-/// fixer, their texel area 6% smaller to 9% larger over 32 rolls and corners,
-/// 3% larger on average. The texels the back of the head and the plane under
-/// the chin gain come from the face's fine way, a row under a millimetre on the
-/// lips.
+/// **Its crown is a chart of its own, and the rest has no hole.** With the face
+/// cut out below the hairline alone (#473's first chart), the wrap round the
+/// joint kept the face's place in its rectangle empty, a third of it, and the
+/// front of the scalp above the face and the crown, where its columns closed
+/// on the pole, came out coarser than 0.24.5 had them - the front of the scalp
+/// a median 1.6 times as coarse over the rolls, the crown an eighth. So the
+/// face chart reaches up to [`CROWN_CUT`], everything above that is one chart
+/// flattened the way it runs as the face is, from the crown seen from above,
+/// and the rest - the sides and the back between the neck and the crown's
+/// chart - is wrapped round the joint with its seam in front, in the face's
+/// place: its rectangle is the skin it covers, a band two thirds of the way
+/// round, and no texel of it is spent on nothing.
+///
+/// **Where the borders run, and why.** The face's runs down in front of the
+/// ears, through the sideburn and over the cheek behind the corner of the jaw,
+/// where a beard's flank is the one painted thing that crosses it, and up over
+/// the temples to the crown's chart; the crown's is a ring round the head at
+/// [`CROWN_CUT`]; and the head's at the neck, where its chart ended already. On
+/// a bald head those are the seams there are: two lines up the sides of the
+/// forehead in front of the ears and a ring over the top of the head, and none
+/// down the back of it, where 0.24.5 and #473's first chart had theirs. The
+/// brows, the eyes, the nose, the mouth, the moustache, the beard on the chin
+/// and the hairline lie inside the face, never across a seam.
+///
+/// **What the face asks of its texels.** Every triangle of the face asks to
+/// keep its own shape, the scalp above the hairline [`SCALP_DETAIL`] times its
+/// own size and the skin that faces down under the jaw [`JAW_DETAIL`] times
+/// (see [`PersonHead::detail`]); and once it is flat the mouth's band, where a
+/// moustache grows, is magnified [`MOUTH_DETAIL`] times at its middle, every
+/// place pushed out along the line from the mouth (see
+/// [`PersonHead::magnify`]). Asked of the flattening instead, as #473's fixer
+/// did, a band that asks more than the skin round it is squeezed by that skin,
+/// and the needles at the mouth's corners turned over (#473's second fixer).
+/// No triangle of any of the three charts is left turned over (`unfold`'s
+/// `untangle`).
+///
+/// **It asks for the area it did, less a share.** The head's area is asked for
+/// as before, round its vertices' centroid and by its extent along the axis,
+/// without the cap at its pole, but only [`PERSON_HEAD_SHARE`] of it: laid flat
+/// and with no hole, the head is finer for fewer texels. Of that the face is
+/// given [`FACE_WEIGHT`] times the texels its skin would have on the band round
+/// the back and the crown [`CROWN_WEIGHT`] times, each asked in the shape of
+/// the skin it covers - and on a narrow head, whose sides and crown lie near
+/// the joint's axis and its face far from it, the band and the crown more
+/// again ([`BAND_FROM`], [`CROWN_FROM`]). A head whose face is kept in its wrap
+/// asks all it did.
 ///
 /// **What it does not change.** Every painter reads a texel's body position,
 /// never its place in the atlas, so what is painted where stays where it was;
 /// but a grain that fades by how finely its texel is sampled (the skin
 /// painter's `resolvable`) shows more or less of itself as the sampling moves.
-/// And the face is still one island in the middle of its chart, with the seam
-/// up the back.
+/// And the face is one island, never split down the nose.
 #[derive(Clone, Copy, Debug)]
-struct PersonHead {
+struct PersonHead<'a> {
     /// A point on the head's axis: the head joint, in body space.
     on_axis: Vec3,
+    /// The head's axis, the bone entering it, and the two square to it: the
+    /// way the body faces and its side.
+    axis: Vec3,
+    tangent: Vec3,
+    binormal: Vec3,
+    /// The hairline, as a height along the axis above the joint: above it the
+    /// face chart asks [`SCALP_DETAIL`] of the face's texels.
+    hairline: f32,
+    /// Where the face chart takes in the whole crown, as a height along the
+    /// axis above the joint ([`CROWN_CUT`]).
+    cut: f32,
+    /// The mouth's middle, to the side and up the axis from the joint, and
+    /// half its width, from its pocket: the face chart is magnified
+    /// [`MOUTH_DETAIL`] times there. `None` without a pocket.
+    mouth: Option<(Vec2, f32)>,
+    /// The mouth's pocket: vertices the face's flattening leaves out, ascending
+    /// (#155: they are charted apart after the unwrap).
+    aside: &'a [u32],
+    /// Whether the face is a chart of its own, rather than kept in the wrap
+    /// ([`FACE_LEAST`]): known once the head's charts are found.
+    charted: bool,
 }
 
-impl PersonHead {
-    /// What `rig`'s head asks of its chart, if it is a person's.
-    fn of(rig: &Rig, beast: Option<&BeastCharts>) -> Option<Self> {
+impl<'a> PersonHead<'a> {
+    /// What `rig`'s head asks of its charts, if it is a person's: `mesh`'s
+    /// faces in `face_zones`, the mouth's pocket `aside`, ascending.
+    fn of(
+        rig: &Rig,
+        beast: Option<&BeastCharts>,
+        mesh: &PolyMesh,
+        face_zones: &[Zone],
+        aside: &'a [u32],
+    ) -> Option<Self> {
         if beast.is_some() || !rig.anatomy.human_head() {
             return None;
         }
         let joint = *rig.in_zone(Zone::Head).first()?;
+        let on_axis = rig.joints[joint].position;
+        let axis = zone_axis(rig, Zone::Head);
+        let (tangent, binormal) = frame(axis);
+        let crown = mesh
+            .faces
+            .iter()
+            .zip(face_zones)
+            .filter(|(_, zone)| **zone == Zone::Head)
+            .flat_map(|(face, _)| face.iter())
+            .map(|&vertex| (mesh.positions[vertex as usize] - on_axis).dot(axis))
+            .fold(0.0, f32::max);
+        let mouth = (!aside.is_empty()).then(|| {
+            let at = |vertex: &u32| {
+                let offset = mesh.positions[*vertex as usize] - on_axis;
+                Vec2::new(offset.dot(binormal), offset.dot(axis))
+            };
+            let middle = aside.iter().map(at).sum::<Vec2>() / aside.len() as f32;
+            let half = aside
+                .iter()
+                .map(|vertex| (at(vertex).x - middle.x).abs())
+                .fold(0.0, f32::max);
+            (middle, half.max(f32::EPSILON))
+        });
         Some(Self {
-            on_axis: rig.joints[joint].position,
+            on_axis,
+            axis,
+            tangent,
+            binormal,
+            hairline: FACE_TOP * crown,
+            cut: CROWN_CUT * crown,
+            mouth,
+            aside,
+            charted: false,
         })
     }
 
-    /// Whether `group` is the head this wraps, rather than its cap.
-    fn wraps(person: Option<&Self>, group: &Group) -> bool {
-        person.is_some() && group.zone == Zone::Head && group.kind == Kind::Cylindrical
+    /// Whether skin at `at` lies on the face chart: in front of the ears and
+    /// below the crown's chart.
+    fn on_the_face(&self, at: Vec3) -> bool {
+        let offset = at - self.on_axis;
+        let height = offset.dot(self.axis);
+        let turn = offset.dot(self.binormal).atan2(offset.dot(self.tangent));
+        turn.abs() <= FACE_SIDE && height < self.cut
     }
 
-    /// The rectangle the head asks for: the area it `asked` for round its
-    /// vertices' centroid, in the shape of its `own` chart round the joint, made
-    /// [`PERSON_HEAD_ASPECT`] as wide as that.
-    fn shaped(asked: Vec2, own: Vec2) -> Vec2 {
-        let scale = (asked.x * asked.y / (own.x * own.y).max(f32::EPSILON)).sqrt();
-        Vec2::new(
-            own.x * scale * PERSON_HEAD_ASPECT,
-            own.y * scale / PERSON_HEAD_ASPECT,
-        )
+    /// Whether `face` of `mesh` stands at the head's pole, which a wrap round
+    /// the head cannot chart (see [`CAP_SPAN`]).
+    fn at_the_pole(&self, mesh: &PolyMesh, face: u32) -> bool {
+        face_normal(mesh, face as usize).dot(self.axis).abs() > 0.85
+            && span_round(mesh, face as usize, self.on_axis, self.axis) > CAP_SPAN
     }
-}
 
-/// How wide a person's head chart is asked for, against the shape of the skin it
-/// covers round the head joint (#469).
-///
-/// Asked in the shape the old chart had round the centroid, the chart was less
-/// than half as wide for its height as the skin wrapped round the joint, and a
-/// texel spanned 3.3 mm round the head against 1.5 mm up it (the medians over
-/// the head). In the skin's own shape the face ran short of rows. At three
-/// quarters of the skin's width, a ninth wider than the old shape, the columns
-/// that [`FrontView`] gives the nose are paid for: against the old shape (about
-/// 0.66 of the skin's width), behind the cheek, over the scalp and at the nape
-/// an eighth finer, the face's ninetieth percentile a ninth finer, the nose's
-/// median a twelfth coarser.
-/// Provenance: **measured** on the rolls and corners of #469's fixer.
-const PERSON_HEAD_ASPECT: f32 = 0.74;
+    /// Whether skin at `at` lies on the crown's chart.
+    fn on_the_crown(&self, at: Vec3) -> bool {
+        (at - self.on_axis).dot(self.axis) >= self.cut
+    }
 
-/// How a person's head chart is seen from in front of the head joint, at its
-/// face (#469).
-///
-/// Wrapped round the head joint, skin standing out of the face and facing the
-/// side - the flanks of the nose, the wings of the nostrils, the edges of the
-/// philtrum - runs nearly along the line from the axis, and a step along it
-/// barely turns the angle: the side of the nose came out whole triangles to a
-/// texel, twenty millimetres one way at its ninety-ninth percentile.
-/// Wrapped round the old centroid,
-/// just behind the lips, it had been fine, and the back of the head had paid
-/// for it. So the wrap's angle is read from a point that comes forward from the
-/// joint as the skin comes round to the front: at the front, [`FRONT_REACH`] of
-/// the face's depth in front of the axis, never more than [`FRONT_BAND_SHARE`]
-/// of the depth of the face at the skin's own height, and falling away as the
-/// [`FRONT_FALLOFF`]th power of how squarely the skin faces forward, so the
-/// sides, the ears and the back are read from the joint as before.
-///
-/// Its depth is read in [`FRONT_BANDS`] bands up the head, from the nearest
-/// skin within [`FRONT_WIDE`] of straight ahead in each, the least of each band
-/// and the two beside it, so that the point never stands at or past the skin
-/// in front of it, where the wrap would fold: under the jaw and at the crown
-/// the bands are shallow and the angle is the joint's.
-#[derive(Clone, Debug)]
-struct FrontView {
-    /// The face's depth in front of the axis, by band up the head, nearest skin.
-    depth: [f32; FRONT_BANDS],
-    /// The height the first band starts at.
-    low: f32,
-    /// How tall each band is.
-    band: f32,
-    /// How far in front of the axis the angle is read from at most.
-    reach: f32,
-}
-
-impl FrontView {
-    /// The face of the chart over `vertices`, wrapped round `axis` through
-    /// `origin`, `tangent` pointing forward and `binormal` to the side.
-    fn of(
-        mesh: &PolyMesh,
-        vertices: &[u32],
-        origin: Vec3,
-        axis: Vec3,
-        tangent: Vec3,
-        binormal: Vec3,
-    ) -> Self {
-        // Read twice rather than kept, so that a build holds nothing for it.
-        let read = || {
-            vertices.iter().map(|&vertex| {
-                let offset = mesh.positions[vertex as usize] - origin;
-                (offset.dot(axis), offset.dot(binormal), offset.dot(tangent))
-            })
+    /// How many times its own size the face chart asks for skin at `at` whose
+    /// outward `normal` is that: the scalp above the hairline
+    /// [`SCALP_DETAIL`], the skin that faces down under the jaw
+    /// [`JAW_DETAIL`], each eased in over its edge.
+    fn detail(&self, at: Vec3, normal: Vec3) -> f32 {
+        let ease = |t: f32| {
+            let t = t.clamp(0.0, 1.0);
+            t * t * (3.0 - 2.0 * t)
         };
-        let (low, high) = read().fold((f32::INFINITY, f32::NEG_INFINITY), |(low, high), at| {
-            (low.min(at.0), high.max(at.0))
-        });
-        let band = ((high - low) / FRONT_BANDS as f32).max(f32::EPSILON);
-        let mut nearest = [f32::INFINITY; FRONT_BANDS];
-        for (height, side, ahead) in read() {
-            if ahead > 0.0 && side.abs() < FRONT_WIDE * ahead {
-                let at = (((height - low) / band) as usize).min(FRONT_BANDS - 1);
-                nearest[at] = nearest[at].min(ahead);
+        let offset = at - self.on_axis;
+        let height = offset.dot(self.axis);
+        let fade = HAIRLINE_FADE * self.hairline.abs().max(f32::EPSILON);
+        let scalp =
+            1.0 + (SCALP_DETAIL - 1.0) * ease((height - self.hairline + fade) / (2.0 * fade));
+        let down = -normal.dot(self.axis);
+        let jaw = 1.0 + (JAW_DETAIL - 1.0) * ease((down - JAW_FROM) / JAW_EASE);
+        scalp * jaw
+    }
+
+    /// The face's chart, `places` over `vertices` (ascending), started from
+    /// `start`, with the mouth's band magnified [`MOUTH_DETAIL`] times at its
+    /// middle (#473's second fixer).
+    ///
+    /// Every place is pushed out along the line from the mouth's middle - the
+    /// middle of `rim`, the vertices of the mouth's pocket on the skin - by an
+    /// amount that grows with how far along that line it lies, measured in an
+    /// ellipse [`MOUTH_WIDE`] half-widths of the mouth to each side and
+    /// [`MOUTH_ABOVE`] and [`MOUTH_BELOW`] above and below it, turned as the
+    /// chart turned from its start. Along each line the step outward is
+    /// `1 + (k - 1)(1 - s(r))` times the step before it, `s` the smooth step and
+    /// `r` the reach in the ellipse, out to its rim, and one past it: so the
+    /// middle is magnified `k` each way, the band eases out to the face's own
+    /// steps at its rim, and nothing is squeezed - across the line every place
+    /// moves out more than it moved along it. Each line is laid on itself, in
+    /// order, so the chart stays one sheet; but a triangle's sides stay
+    /// straight where the push bends, and a needle - a fanned polygon's corners
+    /// all but in a line - bends over: 24 to 50 on each of the 43 rolls, most
+    /// round the band's rim below and beside the mouth's corners, where the
+    /// ellipse turns tightest. `unfold`'s `untangle` lays each back by the few
+    /// thousandths of a millimetre it bent (#473's third fixer).
+    fn magnify(
+        &self,
+        mesh: &PolyMesh,
+        rim: &[u32],
+        vertices: &[u32],
+        places: &mut [DVec2],
+        start: impl Fn(Vec3) -> Vec2,
+    ) {
+        let Some((_, half)) = self.mouth else {
+            return;
+        };
+        let (mut middle, mut count) = (DVec2::ZERO, 0.0f64);
+        for vertex in rim {
+            if let Ok(index) = vertices.binary_search(vertex) {
+                middle += places[index];
+                count += 1.0;
             }
         }
-        let depth: [f32; FRONT_BANDS] = std::array::from_fn(|at| {
-            let beside = [at.saturating_sub(1), at, (at + 1).min(FRONT_BANDS - 1)];
-            let least = beside
-                .map(|near| nearest[near])
-                .into_iter()
-                .fold(f32::INFINITY, f32::min);
-            if least.is_finite() { least } else { 0.0 }
-        });
-        let deepest = depth.iter().copied().fold(0.0, f32::max);
-        Self {
-            depth,
-            low,
-            band,
-            reach: FRONT_REACH * deepest,
+        if count == 0.0 {
+            return;
+        }
+        let middle = middle / count;
+        // The chart's turn from where it started.
+        let begun: Vec<DVec2> = vertices
+            .iter()
+            .map(|&vertex| start(mesh.positions[vertex as usize]).as_dvec2())
+            .collect();
+        let centre = |places: &[DVec2]| places.iter().sum::<DVec2>() / places.len() as f64;
+        let (from, to) = (centre(&begun), centre(places));
+        let (mut cos, mut sin) = (0.0f64, 0.0f64);
+        for (one, two) in begun.iter().zip(places.iter()) {
+            let (one, two) = (*one - from, *two - to);
+            cos += one.dot(two);
+            sin += one.perp_dot(two);
+        }
+        let turn = DVec2::new(cos, sin).normalize_or(DVec2::X);
+        let k = f64::from(MOUTH_DETAIL);
+        let half = f64::from(half);
+        for place in places.iter_mut() {
+            let offset = *place - middle;
+            let own = DVec2::new(
+                turn.x * offset.x + turn.y * offset.y,
+                -turn.y * offset.x + turn.x * offset.y,
+            );
+            let up = own.y
+                / (half
+                    * f64::from(if own.y > 0.0 {
+                        MOUTH_ABOVE
+                    } else {
+                        MOUTH_BELOW
+                    }));
+            let across = own.x / (f64::from(MOUTH_WIDE) * half);
+            let reach = (across * across + up * up).sqrt();
+            let grown = if reach >= 1.0 {
+                reach + 0.5 * (k - 1.0)
+            } else {
+                reach + (k - 1.0) * (reach - reach.powi(3) + 0.5 * reach.powi(4))
+            };
+            let scale = if reach > 1e-9 { grown / reach } else { k };
+            *place = middle + offset * scale;
         }
     }
 
-    /// The face's depth at `height`, between the bands' middles.
-    fn depth_at(&self, height: f32) -> f32 {
-        let last = self.depth.len() - 1;
-        let at = ((height - self.low) / self.band - 0.5).clamp(0.0, last as f32);
-        let below = (at as usize).min(last);
-        let above = (below + 1).min(last);
-        let share = at - below as f32;
-        self.depth[below] + (self.depth[above] - self.depth[below]) * share
+    /// Whether `face` of `mesh` is part of the mouth's pocket.
+    fn set_aside(&self, mesh: &PolyMesh, face: u32) -> bool {
+        mesh.faces[face as usize]
+            .iter()
+            .any(|vertex| self.aside.binary_search(vertex).is_ok())
     }
 
-    /// The angle round the axis of skin `side` of it and `ahead` of it, at
-    /// `height` along it.
-    fn turn(&self, side: f32, ahead: f32, height: f32) -> f32 {
-        let reach = (side * side + ahead * ahead).sqrt();
-        if reach <= f32::EPSILON {
-            return side.atan2(ahead);
+    /// Where the face's flattening starts `at`: wrapped round the joint at
+    /// `radius`, in metres.
+    fn start(&self, at: Vec3, radius: f32) -> Vec2 {
+        let offset = at - self.on_axis;
+        let turn = offset.dot(self.binormal).atan2(offset.dot(self.tangent));
+        Vec2::new(turn * radius, offset.dot(self.axis))
+    }
+
+    /// Where the flattening of the rest of the head starts `at`: wrapped round
+    /// the joint at `radius`, in metres, with its seam in front, in the face's
+    /// place.
+    fn round_the_back(&self, at: Vec3, radius: f32) -> Vec2 {
+        let offset = at - self.on_axis;
+        let turn = offset.dot(self.binormal).atan2(offset.dot(self.tangent));
+        Vec2::new(
+            turn.rem_euclid(std::f32::consts::TAU) * radius,
+            offset.dot(self.axis),
+        )
+    }
+
+    /// Where the crown's flattening starts `at`: seen from above, down the
+    /// axis.
+    fn seen_from_above(&self, at: Vec3) -> Vec2 {
+        let offset = at - self.on_axis;
+        Vec2::new(offset.dot(self.tangent), offset.dot(self.binormal))
+    }
+
+    /// The face's chart, over `group`, whose faces' corners are `vertices`.
+    ///
+    /// The mouth's pocket is left out of the flattening (#155): a fold behind
+    /// the lips has no place in a chart of the face, and it is charted apart
+    /// after the unwrap. Its own vertices wait at the middle of the lips' seam.
+    fn flatten(&self, mesh: &PolyMesh, group: &Group, vertices: Vec<u32>) -> Projection {
+        let (pocket, skin): (Vec<u32>, Vec<u32>) = group
+            .faces
+            .iter()
+            .partition(|&&face| self.set_aside(mesh, face));
+        let (solved, loose) = joined(mesh, &skin);
+        let radius = vertices
+            .iter()
+            .map(|&vertex| {
+                let offset = mesh.positions[vertex as usize] - self.on_axis;
+                (offset - self.axis * offset.dot(self.axis)).length()
+            })
+            .sum::<f32>()
+            / vertices.len().max(1) as f32;
+        let start = |at: Vec3| match group.kind {
+            Kind::Unfolded => self.start(at, radius),
+            Kind::Planar => self.seen_from_above(at),
+            Kind::Cylindrical => self.round_the_back(at, radius),
+        };
+        let flat = match group.kind {
+            Kind::Unfolded => {
+                let mut rim: Vec<u32> = pocket
+                    .iter()
+                    .flat_map(|&face| mesh.faces[face as usize].iter().copied())
+                    .collect();
+                rim.sort_unstable();
+                rim.dedup();
+                unfold::unfold(
+                    mesh,
+                    &solved,
+                    start,
+                    |at, normal| self.detail(at, normal),
+                    |vertices, places| self.magnify(mesh, &rim, vertices, places, start),
+                )
+            }
+            _ => unfold::unfold(mesh, &solved, start, |_, _| 1.0, |_, _| {}),
+        };
+        let mut angle = HashMap::with_capacity(vertices.len());
+        let mut along = HashMap::with_capacity(vertices.len());
+        for (&vertex, place) in flat.vertices.iter().zip(&flat.places) {
+            angle.insert(vertex, place.x);
+            along.insert(vertex, place.y);
         }
-        let facing = (ahead / reach).max(0.0);
-        let forward =
-            self.reach.min(FRONT_BAND_SHARE * self.depth_at(height)) * facing.powi(FRONT_FALLOFF);
-        side.atan2(ahead - forward)
+        // A scrap joined to the chart at a corner alone ([`merge_scraps`]) is
+        // laid beside that corner as its start lays it.
+        let mut placing = true;
+        while placing {
+            placing = false;
+            for &face in &loose {
+                let corners = &mesh.faces[face as usize];
+                let Some(&anchor) = corners.iter().find(|vertex| angle.contains_key(*vertex))
+                else {
+                    continue;
+                };
+                let from = start(mesh.positions[anchor as usize]);
+                let at = Vec2::new(angle[&anchor], along[&anchor]);
+                for &vertex in corners {
+                    if let std::collections::hash_map::Entry::Vacant(empty) = angle.entry(vertex) {
+                        let place = at + start(mesh.positions[vertex as usize]) - from;
+                        empty.insert(place.x);
+                        along.insert(vertex, place.y);
+                        placing = true;
+                    }
+                }
+            }
+        }
+        let (mut seam, mut count) = (Vec2::ZERO, 0.0f32);
+        for &face in &pocket {
+            for vertex in &mesh.faces[face as usize] {
+                if let (Some(&u), Some(&v)) = (angle.get(vertex), along.get(vertex)) {
+                    seam += Vec2::new(u, v);
+                    count += 1.0;
+                }
+            }
+        }
+        let seam = seam / count.max(1.0);
+        for &vertex in &vertices {
+            angle.entry(vertex).or_insert(seam.x);
+            along.entry(vertex).or_insert(seam.y);
+        }
+        let range = |values: &HashMap<u32, f32>| {
+            vertices
+                .iter()
+                .fold((f32::INFINITY, f32::NEG_INFINITY), |(low, high), vertex| {
+                    (low.min(values[vertex]), high.max(values[vertex]))
+                })
+        };
+        Projection {
+            kind: match group.kind {
+                Kind::Planar => Kind::Planar,
+                _ => Kind::Unfolded,
+            },
+            u_range: range(&angle),
+            v_range: range(&along),
+            angle,
+            along,
+            shifts: group
+                .faces
+                .iter()
+                .map(|&face| vec![0; mesh.faces[face as usize].len()])
+                .collect(),
+            mean_radius: radius,
+            radii: HashMap::new(),
+            area: group
+                .faces
+                .iter()
+                .map(|&face| face_area(mesh, face as usize))
+                .sum(),
+            zone: group.zone,
+            u_warp: Vec::new(),
+            v_warp: Vec::new(),
+        }
     }
 }
 
-/// How many bands up a person's head [`FrontView`] reads the face's depth in.
-/// Provenance: **chosen** (#469's fixer): a lip's height or less each; twelve
-/// measured alike.
-const FRONT_BANDS: usize = 24;
+/// How far round the head from straight ahead a person's face chart reaches,
+/// in radians (#473): sixty degrees, in front of the ears.
+///
+/// Measured on the five heads of `tests/uv.rs`, before #474's packer: at fifty
+/// degrees the plane under the jaw, cut at the face's corners, came out
+/// coarser - its ninetieth percentile 4.05 mm a texel against 2.76 here - and
+/// at seventy the face spread round to where it faces the side, its median
+/// 1.41 against 1.35.
+/// Provenance: **measured** (#473).
+pub(crate) const FACE_SIDE: f32 = 1.05;
 
-/// How near straight ahead, as the side's share of the way ahead, skin counts
-/// toward the face's depth in a band. Provenance: **measured** (#469's fixer):
-/// at three tenths, the deepest skin beside the nose went uncounted, the worst
-/// hundredth of the nose's flanks went from 16 to 26 mm a texel and the
-/// ninetieth percentile under the jaw from 4.0 to 4.8.
-const FRONT_WIDE: f32 = 0.5;
+/// Where a person's hairline stands, as a share of the way from the head joint
+/// to the crown (#473): `hair::follicle::scalp` puts it half a frame above the
+/// eye line, about half way up a head two frames tall whose eye line is at its
+/// joint. Above it the face chart asks [`SCALP_DETAIL`] of the face's texels.
+/// (It was where #473's first face chart ended above; measured as
+/// [`FACE_SIDE`] was, at 0.4 the top of the forehead went back to the wrap and
+/// the face's ninetieth percentile with it, 2.68 mm a texel against 2.10.)
+/// Provenance: **derived** from the scalp's hairline.
+const FACE_TOP: f32 = 0.5;
 
-/// How far in front of the joint a person's head is seen from, as a share of
-/// the face's depth at its deepest band. Provenance: **measured** (#469's
-/// fixer): the worst hundredth of the nose and the lips at 5.3 mm a texel at
-/// 0.45 and 4.4 here; at 0.63, 4.0, but the shelves beside the nose, seen
-/// from nearly level with them, began to fold - the worst hundredth of the
-/// nose's flanks from 16 to 32 mm - and the face's ninetieth percentile grew
-/// coarser.
-const FRONT_REACH: f32 = 0.54;
+/// Above what share of the way from the head joint to the crown a person's
+/// head is one chart of its own, its crown, flattened the way it runs from the
+/// crown seen from above (#473's fixer): see [`PersonHead`].
+///
+/// Chosen as the height where the skin of a head two frames tall has turned
+/// about half way from facing out to facing up, so that both the wrap below and
+/// the crown's chart above see their skin at less than half a right angle from
+/// square: the crown seen from above, under that, flattens with less than a
+/// sixth of stretch to take out, and the band below it ends before its columns
+/// close on the pole, where 0.24.5's wrap streaked round the crown.
+/// Provenance: **chosen** (#473's fixer).
+pub(crate) const CROWN_CUT: f32 = 0.7;
 
-/// The most of the face's depth at a height that the point it is seen from
-/// comes forward, so that it stays behind the skin in front of it. Provenance:
-/// **derived**: on a round head the angle turns the same way all round while
-/// the point stands inside 0.87 of the radius at [`FRONT_FALLOFF`]'s power.
-/// Without it the point stood at or past the skin under the jaw and at the
-/// crown, and the whole head came out a sixth coarser.
-const FRONT_BAND_SHARE: f32 = 0.85;
+/// How many times the texels an equal area of the band round the back of a
+/// person's head gets its crown's chart gets ([`CROWN_CUT`]).
+///
+/// Measured over the 43 rolls against 0.24.5, the crown's median mm a texel
+/// on each body over 0.24.5's: at 1.15 (the face at 4.3), 0.98 at the median
+/// and 1.10 at worst; at 1.6, 0.85 and 0.96; at 2.0 (the face at 5.5), 0.83,
+/// the band round the back paying for it, the nape 1.12 times 0.24.5's on the
+/// worst body.
+/// Provenance: **measured** (#473's fixer).
+const CROWN_WEIGHT: f32 = 1.6;
 
-/// How fast, as a power of how squarely skin faces forward, the point a person's
-/// head is seen from falls back to the joint round the sides. Provenance:
-/// **measured** (#469's fixer): at the square the cheeks and the skin under
-/// the jaw paid for the nose, the ninetieth percentile under the jaw from 4.0
-/// to 5.3 mm a texel; at the sixth power the eyes beside it did, their median
-/// from 1.85 to 1.96.
-const FRONT_FALLOFF: i32 = 4;
+/// How many times its own size the face chart asks for the scalp above the
+/// hairline ([`FACE_TOP`]): the front of the scalp is not the face, but 0.24.5
+/// spent the face's columns on it, 2.00 mm a texel at the median over the
+/// rolls where #473's first chart, which left it to the wrap, spent 2.99.
+///
+/// Measured over the 43 rolls, at 0.66 the front of the scalp 0.92 of 0.24.5's
+/// at the median and 1.04 at worst; at 0.7, 0.87 and 0.97, the face paying; at
+/// 0.6, 0.96 and 1.08. With the mouth's band magnified ([`MOUTH_DETAIL`]) the
+/// face's other texels are fewer: at 0.66, 1.07 at the median and 17 of the
+/// rolls more than a twentieth coarser than 0.24.5's; at 0.8, 0.89 and 0.97.
+/// Provenance: **measured** (#473's fixer, and its second).
+const SCALP_DETAIL: f32 = 0.8;
+
+/// Over what share of the hairline's height the face chart eases from the
+/// face's detail to the scalp's ([`SCALP_DETAIL`]), either side of it.
+/// Provenance: **chosen** (#473's fixer): a step in the detail asked is a fold
+/// of stretch across it, and the hairline lies inside the face chart.
+const HAIRLINE_FADE: f32 = 0.15;
+
+/// How many times the face chart is magnified at the middle of the mouth's
+/// band, each way: the upper lip, where a moustache grows, the lips and the top
+/// of the chin, easing out to the face's own steps at the band's rim
+/// ([`MOUTH_WIDE`], [`MOUTH_ABOVE`], [`MOUTH_BELOW`]; see
+/// [`PersonHead::magnify`]).
+///
+/// 0.24.5's head chart warped its columns to the refined lips and spent them
+/// on the whole of the mouth's width, so its moustache and the philtrum were
+/// charted finely - the philtrum 1.01 mm a texel at the median over the rolls,
+/// against the face's 1.70. #473's fixer asked the flattening for 1.55 times
+/// the size there; squeezed by the face round it, the needles at the mouth's
+/// corners turned over, 13 texels of rc10's face laid twice and 9.7 turned
+/// over, and the philtrum still 1.15 times 0.24.5's at the median. Magnified
+/// once the face is flat, at 1.55, the philtrum 1.08 times 0.24.5's at the
+/// median and 27 of the 43 rolls a twentieth coarser or more; at two, 0.89 and
+/// none, the moustache 0.67 of 0.24.5's at the median - on seeds 175, 237 and
+/// 7, 1,089, 673 and 1,090 of the moustache's texels, against 0.24.5's 769,
+/// 494 and 779, their footprints 0.90, 0.82 and 0.83 mm long at the median
+/// against 1.07, 0.88 and 1.03.
+/// Provenance: **measured** (#473's fixer, and its second).
+const MOUTH_DETAIL: f32 = 2.0;
+
+/// How far the mouth's band reaches to each side, in half the width of the
+/// mouth's pocket. At 2.4, the skin level with the mouth, out to where it
+/// faces the side, 0.84 of 0.24.5's mm a texel at the median over the rolls
+/// and roll 11's 1.09 times; at 3.5, 0.77 and none above 0.96.
+/// Provenance: **measured** with [`MOUTH_DETAIL`] (#473's second fixer).
+const MOUTH_WIDE: f32 = 3.5;
+
+/// How far the mouth's band reaches above the mouth, in half the width of the
+/// mouth's pocket: past the upper lip to the foot of the nose. Reaching less
+/// than half as far, the band's edge lay across the moustache and stretched
+/// it, a coarser moustache for a finer mouth. Provenance: **measured** with
+/// [`MOUTH_DETAIL`].
+const MOUTH_ABOVE: f32 = 3.0;
+
+/// How far the mouth's band reaches below the mouth, in half the width of the
+/// mouth's pocket. Provenance: **measured** with [`MOUTH_DETAIL`].
+const MOUTH_BELOW: f32 = 1.2;
+
+/// How many times its own size the face chart asks for the skin that faces
+/// down under the jaw, past [`JAW_FROM`] of straight down and eased in over
+/// [`JAW_EASE`] more (#473's second fixer).
+///
+/// Laid flat with the face, the plane under the chin came out 0.56 of 0.24.5's
+/// mm a texel at the median over the rolls, the finest skin on the head
+/// relative to it, which a camera at a person's side rarely sees. At four
+/// fifths, 0.67, and no roll above 0.75; at three quarters, slider corner rc4
+/// 1.10 times 0.24.5's.
+/// Provenance: **measured** (#473's second fixer).
+const JAW_DETAIL: f32 = 0.8;
+
+/// How far toward straight down, as the cosine from the head's axis, the skin
+/// under the jaw starts asking [`JAW_DETAIL`]: the underside of the chin and
+/// the throat, not the front of the chin. Provenance: **chosen** (#473's
+/// second fixer).
+const JAW_FROM: f32 = 0.3;
+
+/// Over how much more of the cosine [`JAW_DETAIL`] eases in. Provenance:
+/// **chosen** (#473's second fixer).
+const JAW_EASE: f32 = 0.4;
+
+/// How much of the atlas a person's head asks for, as a share of what its one
+/// chart round its vertices' centroid asked before #469 (#473).
+///
+/// A head laid flat spends its texels as evenly each way as it can, where the
+/// wrap round the joint spent them on rows, so it is finer for the same
+/// texels. The ceiling is the footprints the bake keeps for the painter's
+/// beard (`texture::bake::Footprints`): on the default head 396 sixteen-texel
+/// tiles at 0.24.5, and since the owner raised it for #473 (2026-11-14) at
+/// most 576, about 0.4 MB more a build in the web worker, to be spent so that
+/// no region of the head is charted coarser than 0.24.5's. At 0.86 (#473's
+/// fixer) 452 tiles, 460 to 484 under a nudge of libm, and behind the cheek on
+/// narrow heads up to 1.9 times 0.24.5's mm a texel; here 526, 517 to 543
+/// under a nudge, every region of the 43 rolls within a twentieth of 0.24.5's
+/// at the median and the face 0.85 of it. At 1.0, 545 tiles and 560 under a
+/// nudge; at 1.05, 555 and 576.
+/// Provenance: **measured** (#473, its fixer and its second).
+const PERSON_HEAD_SHARE: f32 = 0.97;
+
+/// The least share of a person's head, by area, its face chart may cover
+/// (#473): a head whose face comes out smaller keeps its face in its wrap.
+///
+/// A face covers a quarter of a head and more. But a head shrunk to the end of
+/// its slider comes apart into islands, and the largest there was a scrap of
+/// the refined lips a square centimetre across, laid out over itself at a
+/// thirtieth of a millimetre a texel.
+/// Provenance: **measured** (#473): over the 132 rolls, slider corners and
+/// draws measured the faces cover 0.24 to 0.48 of their heads, and the five
+/// heads that came apart 0.16 and less.
+const FACE_LEAST: f32 = 0.2;
+
+/// How many times the texels an equal area of the band round the back of a
+/// person's head gets its face chart gets (#473).
+///
+/// The face chart is most of the head's skin as it asks for it, so this moves
+/// the band round the back more than the face: over the 43 rolls, at 4.3 and
+/// at 5.5 (the crown at 1.15 and at 2.0) the face's median 1.40 and 1.39 mm a
+/// texel, where the scalp went from 0.73 of 0.24.5's to 0.82 of it; the face
+/// is finer only for a larger [`PERSON_HEAD_SHARE`]. (On #473's first chart, at
+/// four times, the face 1.32 mm a texel and behind the cheek 2.81, against
+/// 0.24.5's 1.71 and 3.31.) With the mouth's band magnified and the band round
+/// the back weighted on narrow heads (#473's second fixer), at five the face
+/// 0.85 of 0.24.5's at the median over the rolls and behind the cheek 0.79; at
+/// six 0.82 and 0.84, the band's slack on the rolls spent on the face.
+/// Provenance: **measured** (#473, its fixer and its second).
+const FACE_WEIGHT: f32 = 6.0;
+
+/// From how many times as far from the head's axis as the band round the back
+/// of a person's head its face lies, on average, the band is weighted more
+/// (#473's second fixer): by that ratio over this, to the power
+/// [`BAND_POWER`].
+///
+/// **Why.** 0.24.5 wrapped the whole head round its joint, so its columns were
+/// narrow where the skin lies near the axis: on a narrow or long head the
+/// sides and the back, beside a face that lies far forward. Laid flat, every
+/// chart is as fine as its share, and behind the cheek such heads came out up
+/// to 1.9 times 0.24.5's mm a texel (slider corner rc6; the narrowest head 1.75
+/// times) where the face came out half of it. Over the 127 rolls, slider
+/// corners and draws measured, 0.24.5's mm a texel behind the cheek over its
+/// face's ran as this ratio to the power -1.62 (correlation -0.93), flat at
+/// about two below 1.5 and down to 0.63 at 2.6: a texel's area as the square,
+/// hence [`BAND_POWER`]. From 1.55, behind the cheek within 1.11 of 0.24.5's on
+/// every body, but the large head of draw u23's scalp grain drawn at 0.269 of
+/// its resolvable fraction against 0.24.5's 0.298 (`texture::skin`'s
+/// `ScalpFloor`); from 1.4, 0.300, and every body's band within 1.07 of
+/// 0.24.5's.
+/// Provenance: **measured** (#473's second fixer).
+const BAND_FROM: f32 = 1.4;
+
+/// The power [`BAND_FROM`]'s ratio weights the band by: twice the -1.62 of
+/// 0.24.5's band-to-face ratio, rounded. Provenance: **derived** (#473's
+/// second fixer).
+const BAND_POWER: f32 = 3.2;
+
+/// From how many times as far from the head's axis as the crown's chart its
+/// face lies the crown is weighted more ([`BAND_FROM`]'s reasoning, the crown
+/// in 0.24.5's last rings round its pole): by that ratio over this, to the
+/// power [`CROWN_POWER`]. Over the 127 bodies, at 2.0 and the power two, the
+/// crown on 8 of the 24 draws more than a twentieth coarser than 0.24.5's
+/// (draw u3 1.27 times) once the band was weighted from 1.4; here 1 (u3,
+/// 1.06), and of the slider corners rc15 1.29 times, rc3 1.09 and fallback rc0
+/// 1.17.
+/// Provenance: **measured** (#473's second fixer).
+const CROWN_FROM: f32 = 1.8;
+
+/// The power [`CROWN_FROM`]'s ratio weights the crown by.
+/// Provenance: **measured** with [`CROWN_FROM`] (#473's second fixer).
+const CROWN_POWER: f32 = 2.5;
 
 /// A beast's tail, charted along its bones rather than round the first of them
 /// (#397).
@@ -709,7 +1135,9 @@ impl TailChain {
     }
 }
 
-/// Unwraps `mesh` as [`unwrap_with`] does, by a beast's rules if it is given them.
+/// Unwraps `mesh` as [`unwrap_with`] does, by a beast's rules if it is given
+/// them, leaving the vertices `aside` - a person's mouth pocket, charted apart
+/// afterwards (#155) - out of a person's face chart's flattening.
 pub(crate) fn unwrap_framed(
     mesh: &PolyMesh,
     rig: &Rig,
@@ -717,6 +1145,7 @@ pub(crate) fn unwrap_framed(
     config: &UvConfig,
     extra: &[Vec2],
     beast: Option<&BeastCharts>,
+    aside: &[u32],
 ) -> (UvUnwrap, Vec<Rect>) {
     if mesh.faces.is_empty() || zones.len() != mesh.positions.len() {
         return (UvUnwrap::default(), Vec::new());
@@ -736,7 +1165,10 @@ pub(crate) fn unwrap_framed(
         })
         .collect();
     let tail = beast.and_then(|_| TailChain::of(rig));
-    let person = PersonHead::of(rig, beast);
+    let mut aside = aside.to_vec();
+    aside.sort_unstable();
+    aside.dedup();
+    let mut person = PersonHead::of(rig, beast, mesh, &face_zones, &aside);
     let groups = connected_groups(
         mesh,
         rig,
@@ -745,25 +1177,82 @@ pub(crate) fn unwrap_framed(
         tail.as_ref(),
         person.as_ref(),
     );
+    if let Some(person) = &mut person {
+        person.charted = groups.iter().any(|group| group.kind == Kind::Unfolded);
+    }
 
     // Project every chart into its own local square first, then pack.
     let mut projections = Vec::with_capacity(groups.len());
     let mut sizes: Vec<Vec2> = Vec::with_capacity(groups.len() + extra.len());
     for group in &groups {
         let projection = project(mesh, rig, group, beast, tail.as_ref(), person.as_ref());
-        // A person's head asks for the atlas it always asked for (#469): see
-        // [`PersonHead`].
-        sizes.push(if PersonHead::wraps(person.as_ref(), group) {
-            let asked = project(mesh, rig, group, beast, tail.as_ref(), None).atlas_size(config);
-            PersonHead::shaped(asked, projection.atlas_size(config))
-        } else {
-            projection.atlas_size(config)
-        });
+        sizes.push(projection.atlas_size(config));
         projections.push(projection);
     }
-    // And its cap at the crown out of that, so that the head, cap and all, asks
-    // for what it did.
-    if person.is_some() {
+    // A person's head asks for the atlas it always asked for (#469), its face
+    // its share of that (#473): see [`PersonHead`].
+    if person.as_ref().is_some_and(|person| person.charted) {
+        // Asked round the vertices' centroid without the cap at the pole, as
+        // before #473: faces there stand at every angle round that wrap at
+        // once, and where one lands decides whether it reaches the whole way
+        // round, the head's ask a seventh larger or not under a last-bit change
+        // of libm.
+        let mut head: Vec<u32> = groups
+            .iter()
+            .filter(|group| group.zone == Zone::Head)
+            .flat_map(|group| group.faces.iter().copied())
+            .filter(|&face| {
+                !person
+                    .as_ref()
+                    .is_some_and(|person| person.at_the_pole(mesh, face))
+            })
+            .collect();
+        head.sort_unstable();
+        let whole = Group {
+            zone: Zone::Head,
+            kind: Kind::Cylindrical,
+            faces: head,
+        };
+        let asked = project(mesh, rig, &whole, beast, tail.as_ref(), None).atlas_size(config);
+        let asked = PERSON_HEAD_SHARE * asked.x * asked.y;
+        // How far from the axis the face lies, and the rest of the head.
+        let radius = |kind: Kind| {
+            groups
+                .iter()
+                .zip(&projections)
+                .filter(|(group, _)| group.zone == Zone::Head && group.kind == kind)
+                .map(|(_, projection)| projection.mean_radius)
+                .fold(0.0f32, f32::max)
+        };
+        let face = radius(Kind::Unfolded);
+        let narrow = |kind: Kind, from: f32, power: f32| {
+            (face / radius(kind).max(f32::EPSILON) / from)
+                .max(1.0)
+                .powf(power)
+        };
+        let band = narrow(Kind::Cylindrical, BAND_FROM, BAND_POWER);
+        let crown = narrow(Kind::Planar, CROWN_FROM, CROWN_POWER);
+        let weight = |group: &Group| match group.kind {
+            Kind::Unfolded => FACE_WEIGHT,
+            Kind::Planar => CROWN_WEIGHT * crown,
+            Kind::Cylindrical => band,
+        };
+        let own: f32 = groups
+            .iter()
+            .zip(&sizes)
+            .filter(|(group, _)| group.zone == Zone::Head)
+            .map(|(group, size)| weight(group) * size.x * size.y)
+            .sum();
+        let scale = (asked / own.max(f32::EPSILON)).sqrt();
+        for (group, size) in groups.iter().zip(&mut sizes) {
+            if group.zone == Zone::Head {
+                *size *= scale * weight(group).sqrt();
+            }
+        }
+    } else if person.is_some() {
+        // A head whose face is kept in its wrap asks all it did at 0.24.5, each
+        // wrapped chart the area it asked round its own vertices' centroid, in
+        // its own shape, less what the cap at its pole asks.
         let caps: f32 = groups
             .iter()
             .zip(&sizes)
@@ -771,15 +1260,18 @@ pub(crate) fn unwrap_framed(
             .map(|(_, size)| size.x * size.y)
             .sum();
         for (group, size) in groups.iter().zip(&mut sizes) {
-            if PersonHead::wraps(person.as_ref(), group) {
-                let area = size.x * size.y;
-                *size *= ((area - caps).max(0.5 * area) / area.max(f32::EPSILON)).sqrt();
+            if group.zone == Zone::Head && group.kind == Kind::Cylindrical {
+                let asked =
+                    project(mesh, rig, group, beast, tail.as_ref(), None).atlas_size(config);
+                let asked = asked.x * asked.y;
+                *size *=
+                    ((asked - caps).max(0.5 * asked) / (size.x * size.y).max(f32::EPSILON)).sqrt();
             }
         }
     }
     let charts = sizes.len();
     sizes.extend_from_slice(extra);
-    let packed = pack::shelf_pack(&sizes, config.gutter);
+    let packed = pack::pack(&sizes, config.gutter);
     let (rects, reserved) = packed.split_at(charts);
     let reserved = reserved.to_vec();
 
@@ -885,6 +1377,29 @@ enum Kind {
     /// entire chart, and no amount of seam handling helps: the face has no seam,
     /// it has a pole. Flattening it along the axis instead is exact.
     Planar,
+    /// Flattened the way its skin runs: a person's face (#473). See
+    /// [`PersonHead`] and [`unfold`].
+    Unfolded,
+}
+
+/// How far round `axis`, through `origin`, the corners of `face` reach: the
+/// whole turn less the widest gap between them.
+fn span_round(mesh: &PolyMesh, face: usize, origin: Vec3, axis: Vec3) -> f32 {
+    let (tangent, binormal) = frame(axis);
+    let mut turns: Vec<f32> = mesh.faces[face]
+        .iter()
+        .map(|&v| {
+            let offset = mesh.positions[v as usize] - origin;
+            let flat = offset - axis * offset.dot(axis);
+            flat.dot(binormal).atan2(flat.dot(tangent))
+        })
+        .collect();
+    turns.sort_unstable_by(f32::total_cmp);
+    let widest_gap = turns.windows(2).map(|pair| pair[1] - pair[0]).fold(
+        std::f32::consts::TAU - (turns[turns.len() - 1] - turns[0]),
+        f32::max,
+    );
+    std::f32::consts::TAU - widest_gap
 }
 
 /// How far round its zone's axis a face's corners must reach before the face
@@ -936,7 +1451,7 @@ fn connected_groups(
         entry.0 += mesh.face_centroid(index);
         entry.1 += 1.0;
     }
-    let face_kinds: Vec<Kind> = (0..mesh.faces.len())
+    let mut face_kinds: Vec<Kind> = (0..mesh.faces.len())
         .map(|face| {
             let zone = face_zones[face];
             let on_head = BeastCharts::head(beast, zone);
@@ -974,29 +1489,24 @@ fn connected_groups(
                     (None, None) => centre / count.max(1.0),
                 },
             };
-            let (tangent, binormal) = frame(axis);
-            let corners = &mesh.faces[face];
-            let mut turns: Vec<f32> = corners
-                .iter()
-                .map(|&v| {
-                    let offset = mesh.positions[v as usize] - origin;
-                    let flat = offset - axis * offset.dot(axis);
-                    flat.dot(binormal).atan2(flat.dot(tangent))
-                })
-                .collect();
-            turns.sort_unstable_by(f32::total_cmp);
-            let widest_gap = turns.windows(2).map(|pair| pair[1] - pair[0]).fold(
-                std::f32::consts::TAU - (turns[turns.len() - 1] - turns[0]),
-                f32::max,
-            );
-            let span = std::f32::consts::TAU - widest_gap;
-            if span > CAP_SPAN {
+            if span_round(mesh, face, origin, axis) > CAP_SPAN {
                 Kind::Planar
             } else {
                 Kind::Cylindrical
             }
         })
         .collect();
+    // A person's face is a chart of its own (#473): see [`PersonHead`].
+    if let Some(person) = person {
+        for (face, kind) in face_kinds.iter_mut().enumerate() {
+            if face_zones[face] != Zone::Head {
+                continue;
+            }
+            if *kind == Kind::Cylindrical && person.on_the_face(mesh.face_centroid(face)) {
+                *kind = Kind::Unfolded;
+            }
+        }
+    }
 
     let mut by_edge: HashMap<(u32, u32), Vec<u32>> = HashMap::new();
     for (index, face) in mesh.faces.iter().enumerate() {
@@ -1007,6 +1517,68 @@ fn connected_groups(
                 .entry((a.min(b), a.max(b)))
                 .or_default()
                 .push(index as u32);
+        }
+    }
+    let by_edge = by_edge;
+    let edges = &by_edge;
+    let neighbours = |face: usize| {
+        let corners = &mesh.faces[face];
+        (0..corners.len()).flat_map(move |corner| {
+            let (a, b) = (corners[corner], corners[(corner + 1) % corners.len()]);
+            edges
+                .get(&(a.min(b), a.max(b)))
+                .map(Vec::as_slice)
+                .unwrap_or_default()
+                .iter()
+                .map(|&next| next as usize)
+        })
+    };
+    // The face is ONE island, the largest by area: a face whose centroid falls
+    // inside the border's line but which touches the face only at a corner goes
+    // back to the head. And a head whose largest island is no face at all - a
+    // shrunken head whose zone has come apart, where the island is a scrap of
+    // the refined lips - keeps the face in its wrap (see [`FACE_LEAST`]).
+    if person.is_some() {
+        let mut island = vec![u32::MAX; mesh.faces.len()];
+        let mut areas: Vec<f32> = Vec::new();
+        for start in 0..mesh.faces.len() {
+            if face_kinds[start] != Kind::Unfolded || island[start] != u32::MAX {
+                continue;
+            }
+            let label = areas.len() as u32;
+            let mut queue = VecDeque::from([start]);
+            island[start] = label;
+            let mut area = 0.0;
+            while let Some(face) = queue.pop_front() {
+                area += face_area(mesh, face);
+                for next in neighbours(face) {
+                    if face_kinds[next] == Kind::Unfolded && island[next] == u32::MAX {
+                        island[next] = label;
+                        queue.push_back(next);
+                    }
+                }
+            }
+            areas.push(area);
+        }
+        let head: f32 = (0..mesh.faces.len())
+            .filter(|&face| face_zones[face] == Zone::Head)
+            .map(|face| face_area(mesh, face))
+            .sum();
+        let largest = (0..areas.len())
+            .max_by(|&one, &two| areas[one].total_cmp(&areas[two]).then(two.cmp(&one)))
+            .filter(|&label| areas[label] >= FACE_LEAST * head);
+        for (face, kind) in face_kinds.iter_mut().enumerate() {
+            if *kind == Kind::Unfolded && Some(island[face] as usize) != largest {
+                *kind = Kind::Cylindrical;
+            }
+        }
+        // And a head with a face of its own has a crown of its own.
+        if let Some(person) = person.filter(|_| largest.is_some()) {
+            for (face, kind) in face_kinds.iter_mut().enumerate() {
+                if face_zones[face] == Zone::Head && person.on_the_crown(mesh.face_centroid(face)) {
+                    *kind = Kind::Planar;
+                }
+            }
         }
     }
 
@@ -1048,8 +1620,118 @@ fn connected_groups(
         groups.push(Group { zone, kind, faces });
     }
 
+    if person.is_some() {
+        merge_scraps(mesh, &mut groups);
+    }
     groups
 }
+
+/// The largest set of `faces` joined edge to edge, and the rest of them.
+fn joined(mesh: &PolyMesh, faces: &[u32]) -> (Vec<u32>, Vec<u32>) {
+    let mut by_edge: HashMap<(u32, u32), Vec<usize>> = HashMap::new();
+    for (index, &face) in faces.iter().enumerate() {
+        let corners = &mesh.faces[face as usize];
+        for corner in 0..corners.len() {
+            let (a, b) = (corners[corner], corners[(corner + 1) % corners.len()]);
+            by_edge.entry((a.min(b), a.max(b))).or_default().push(index);
+        }
+    }
+    let mut label = vec![usize::MAX; faces.len()];
+    let mut sizes: Vec<usize> = Vec::new();
+    for first in 0..faces.len() {
+        if label[first] != usize::MAX {
+            continue;
+        }
+        let mine = sizes.len();
+        label[first] = mine;
+        let mut queue = VecDeque::from([first]);
+        let mut size = 0;
+        while let Some(index) = queue.pop_front() {
+            size += 1;
+            let corners = &mesh.faces[faces[index] as usize];
+            for corner in 0..corners.len() {
+                let (a, b) = (corners[corner], corners[(corner + 1) % corners.len()]);
+                for &next in &by_edge[&(a.min(b), a.max(b))] {
+                    if label[next] == usize::MAX {
+                        label[next] = mine;
+                        queue.push_back(next);
+                    }
+                }
+            }
+        }
+        sizes.push(size);
+    }
+    let largest = (0..sizes.len()).max_by_key(|&one| (sizes[one], usize::MAX - one));
+    let (mut solved, mut loose) = (Vec::new(), Vec::new());
+    for (&face, &mine) in faces.iter().zip(&label) {
+        if Some(mine) == largest {
+            solved.push(face);
+        } else {
+            loose.push(face);
+        }
+    }
+    (solved, loose)
+}
+
+/// Folds every scrap of a person's head - a chart of a face or two that touches
+/// the rest of the head only at a corner, such as a face at the corner of the
+/// jaw whose centroid falls just inside the face's border and whose edges meet
+/// only the face's island and the neck - into the largest of the head's charts
+/// it touches (#473). Alone it was a chart a texel or two across with a seam
+/// all round it, inside a beard.
+fn merge_scraps(mesh: &PolyMesh, groups: &mut Vec<Group>) {
+    let area = |group: &Group| -> f32 {
+        group
+            .faces
+            .iter()
+            .map(|&face| face_area(mesh, face as usize))
+            .sum()
+    };
+    let head: f32 = groups
+        .iter()
+        .filter(|group| group.zone == Zone::Head)
+        .map(area)
+        .sum();
+    let mut from = 0;
+    loop {
+        let Some(scrap) = (from..groups.len()).find(|&index| {
+            groups[index].zone == Zone::Head && area(&groups[index]) < SCRAP_SHARE * head
+        }) else {
+            return;
+        };
+        let corners: Vec<u32> = groups[scrap]
+            .faces
+            .iter()
+            .flat_map(|&face| mesh.faces[face as usize].iter().copied())
+            .collect();
+        let host = (0..groups.len())
+            .filter(|&other| {
+                other != scrap
+                    && groups[other].zone == Zone::Head
+                    && groups[other].faces.iter().any(|&face| {
+                        mesh.faces[face as usize]
+                            .iter()
+                            .any(|vertex| corners.contains(vertex))
+                    })
+            })
+            .max_by(|&one, &two| area(&groups[one]).total_cmp(&area(&groups[two])));
+        let Some(host) = host.filter(|&host| area(&groups[host]) >= SCRAP_SHARE * head) else {
+            from = scrap + 1;
+            continue;
+        };
+        let faces = groups.remove(scrap).faces;
+        let host = if host > scrap { host - 1 } else { host };
+        groups[host].faces.extend(faces);
+        groups[host].faces.sort_unstable();
+        from = from.min(scrap);
+    }
+}
+
+/// How small a share of a person's head a chart of it may be before it is
+/// folded into the chart beside it ([`merge_scraps`]). Provenance: **chosen**
+/// (#473): the scraps measured are under a ten-thousandth of their heads, the
+/// smallest real chart, a shrunken head's crown, a fiftieth.
+const SCRAP_SHARE: f32 = 0.002;
 
 /// One chart's flattening, before packing.
 struct Projection {
@@ -1103,7 +1785,7 @@ impl Projection {
         let width = match self.kind {
             Kind::Cylindrical if !self.radii.is_empty() => span * std::f32::consts::TAU,
             Kind::Cylindrical => span * std::f32::consts::TAU * self.mean_radius.max(1e-4),
-            Kind::Planar => span,
+            Kind::Planar | Kind::Unfolded => span,
         };
         Vec2::new(width, height) * density(self.zone, config).sqrt()
     }
@@ -1137,6 +1819,16 @@ fn project(
         all.dedup();
         all
     };
+
+    // A person's face, flattened the way it runs (#473).
+    // And the rest of it, its crown and the band round its back, when its face
+    // is a chart of its own: see [`PersonHead`].
+    if let Some(person) = person.filter(|person| {
+        group.kind == Kind::Unfolded
+            || (group.zone == Zone::Head && (group.kind == Kind::Planar || person.charted))
+    }) {
+        return person.flatten(mesh, group, vertices);
+    }
 
     let on_head = BeastCharts::head(beast, group.zone);
     // A person's head, wrapped round the head's own axis rather than round its
@@ -1193,10 +1885,6 @@ fn project(
     let skin = beyond
         .filter(|_| group.kind == Kind::Cylindrical)
         .map(|beyond| along_the_skin(mesh, &vertices, origin, axis, beyond));
-    // And a person's face seen from in front of the joint: see [`FrontView`].
-    let front = person
-        .filter(|_| group.kind == Kind::Cylindrical)
-        .map(|_| FrontView::of(mesh, &vertices, origin, axis, tangent, binormal));
 
     for &vertex in &vertices {
         let at = mesh.positions[vertex as usize];
@@ -1221,11 +1909,7 @@ fn project(
                 // behind the body. On a beast's head it points at the crown, so
                 // the seam lands under the chin, and on its tail at the tail's
                 // top, so the seam runs along the underside.
-                let (side, ahead) = (flat.dot(binormal), flat.dot(tangent));
-                let turn = front.as_ref().map_or_else(
-                    || side.atan2(ahead),
-                    |front| front.turn(side, ahead, height),
-                );
+                let turn = flat.dot(binormal).atan2(flat.dot(tangent));
                 angle.insert(vertex, turn / std::f32::consts::TAU + 0.5);
                 along.insert(
                     vertex,
@@ -1233,7 +1917,7 @@ fn project(
                         .map_or(height, |skin| skin.height(height, flat.length())),
                 );
             }
-            Kind::Planar => {
+            Kind::Planar | Kind::Unfolded => {
                 // Flattened down the axis, so a cap keeps its shape.
                 angle.insert(vertex, flat.dot(tangent));
                 along.insert(vertex, flat.dot(binormal));
@@ -1359,6 +2043,7 @@ fn project(
     let (u_warp, v_warp) = match person {
         // A person's head follows its detail by its own measure (#469): see
         // [`PersonHead`].
+        // Only a head whose face is kept in its wrap gets here (#473).
         Some(_) => (
             density_warp(&u_samples, PERSON_FOLLOW_ROUND, WARP_SLOPE),
             density_warp(&v_samples, PERSON_FOLLOW_UP, WARP_SLOPE),
@@ -1629,29 +2314,31 @@ fn density_warp(samples: &[f32], follow: f32, slope: f32) -> Vec<f32> {
 /// 5.3x worst face outside a tail it records.
 const WARP_SLOPE: f32 = 2.5;
 
-/// How far a person's head chart's columns follow its detail round the head,
-/// in place of [`WARP_FOLLOW`] (#469).
+/// How far the columns of a person's head chart follow its detail round the
+/// head when its face is kept in the wrap ([`FACE_LEAST`]), in place of
+/// [`WARP_FOLLOW`] (#469, #473): 0.24.5's figure for every person's head.
 ///
-/// Wrapped round its vertices' centroid, the axis ran through the face and the
-/// face took most of the way round by the angle alone; round the head joint
-/// every part of the head has its share of it, and the face's extra columns
-/// come from this alone. At [`WARP_FOLLOW`]'s half the mouth was a fifth
-/// coarser round the head than it had been; at seven tenths the face's and the
-/// eyes' coarser step is finer than it was and the mouth's within a tenth of
-/// it, while the back of the head still spans half what it did.
+/// Round the head joint every part of the head has its share of the way round,
+/// and a face in the wrap takes its extra columns from this alone. At
+/// [`WARP_FOLLOW`]'s half the mouth was a fifth coarser round the head than it
+/// had been; at seven tenths the face's and the eyes' coarser step is finer
+/// than it was and the mouth's within a tenth of it.
 /// Provenance: **measured** on the rolls and corners of #469.
 const PERSON_FOLLOW_ROUND: f32 = 0.7;
 
-/// How far a person's head chart's rows follow its detail up the head, in place
-/// of [`WARP_FOLLOW`] (#469).
+/// How far the rows of a person's head chart, round the joint, follow its
+/// detail up the head, in place of [`WARP_FOLLOW`] (#469, #473).
 ///
-/// The rows the mouth's detail draws are every column's, the nape's as much as
-/// the lips'; and the face's own median grew coarser as this rose, its rows
-/// going to the mouth's band from the forehead, the cheeks and the eyes.
-/// Provenance: **measured** on the rolls and corners of #469, and lowered from
-/// 0.4 by its fixer, when the head's rows grew fewer under
-/// [`PERSON_HEAD_ASPECT`]: at 0.3 the face's and the eyes' median a thirtieth
-/// finer, the mouth's a seventieth coarser.
+/// Its columns follow nothing: they did, when the face was in the chart and
+/// took its extra columns from the warp, but with the face a chart of its own
+/// the corners crowd only where the face's finer faces spill past its border,
+/// and following them took the back of the head's columns for it - the scalp's
+/// median 3.25 mm a texel against 3.13 uniform, its ninetieth 4.28 against
+/// 3.86. Its rows still close at the crown by following the rings there, the
+/// crown's median 2.71 mm a texel against 3.37 uniform and its ninetieth 3.66
+/// against 5.11, for nothing at the nape.
+/// Provenance: **measured** on the rolls and corners of #469, and on the five
+/// heads of `tests/uv.rs` for #473.
 const PERSON_FOLLOW_UP: f32 = 0.3;
 
 /// Evaluates a [`density_warp`] table at `at`; an empty table is the identity.

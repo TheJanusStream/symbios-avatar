@@ -164,6 +164,15 @@ pub(crate) struct At {
     /// single-sided style — cannot do it from [`Self::lateral`], which is
     /// unsigned because a head is symmetric and most regions are.
     pub across: f32,
+    /// Which way the skin faces there, head-local and unit length, where the
+    /// asker knows it.
+    ///
+    /// **Only the moustache reads it** (#475): the nose's foot overhangs the
+    /// lip, so its underside stands at the heights a moustache grows at and
+    /// only its facing says it is nose. A painter's texel and a scattered
+    /// root know their normal and pass it; a bare position does not, and every
+    /// region answers it as it always did.
+    pub normal: Option<Vec3>,
 }
 
 /// What each region is allowed to be asked about a point.
@@ -234,7 +243,8 @@ impl Follicles {
     ///
     /// Takes the [`Skull`] and [`Canon`] the pipeline has already measured
     /// rather than measuring its own: see the module header for what a second
-    /// `Skull::measure` costs.
+    /// `Skull::measure` costs. The moustache reads the mouth's corners off the
+    /// skull's own measure of the cut (#475).
     #[must_use]
     pub fn of(
         rig: &crate::rig::Rig,
@@ -243,14 +253,15 @@ impl Follicles {
         params: &FollicleParams,
     ) -> Self {
         let brows = brows::Brows::of(canon, &params.brows);
+        let chin = chin::Chin::of(skull, canon, &params.chin);
         Self {
             head: skull.head,
             origin: rig.joints[skull.head].position,
             skull: skull.clone(),
             scalp: scalp::Scalp::of(skull, canon, &params.scalp),
             brows,
-            moustache: moustache::Moustache::of(canon, &params.moustache),
-            chin: chin::Chin::of(skull, canon, &params.chin),
+            moustache: moustache::Moustache::of(skull, canon, &params.moustache, &chin.pad()),
+            chin,
             flanks: flanks::Flanks::of(skull, canon, &params.flanks),
             clearance: scalp::Clearance::of(skull, canon, brows.ridge().level),
         }
@@ -305,6 +316,17 @@ impl Follicles {
     #[must_use]
     pub fn lip(&self) -> moustache::Lip {
         self.moustache.lip()
+    }
+
+    /// The moustache's whole outline on this head: its floor round the lips,
+    /// its ceiling under the nose and its ends beside the mouth (#475).
+    ///
+    /// Crate-private beside the public [`Self::lip`], which carries its
+    /// midline and its extent: the styles read this, so a grown whisker sweeps
+    /// toward the floor the paint stops at.
+    #[must_use]
+    pub(crate) fn outline(&self) -> moustache::Outline {
+        self.moustache.outline()
     }
 
     /// The patch of chin a beard grows on, on this head.
@@ -377,6 +399,45 @@ impl Follicles {
         Follicle::ALL.map(|follicle| self.region(follicle).weight(&at))
     }
 
+    /// [`Self::weight`] at a point of skin facing `normal`, head-local.
+    ///
+    /// For an asker that knows the skin's facing - a painter's texel, a
+    /// scattered root - which the moustache reads to keep the nose's underside
+    /// bare (#475). Every other region answers as [`Self::weight`] does.
+    #[must_use]
+    pub(crate) fn weight_on(&self, follicle: Follicle, local: Vec3, normal: Vec3) -> f32 {
+        let at = At {
+            normal: Some(normal),
+            ..self.resolve(local)
+        };
+        self.region(follicle).weight(&at)
+    }
+
+    /// How densely `follicle`'s roots are sown at a point of skin facing
+    /// `normal`, head-local: [`Self::weight_on`], and for the moustache its
+    /// outline's crowd as well, so its ends are sown thinner than its lip
+    /// (#475's fixer; `moustache::Outline::spread_on`). What the scatter
+    /// spreads a region's count by; a root's own weight is still the mask's.
+    #[must_use]
+    pub(crate) fn sown_on(&self, follicle: Follicle, local: Vec3, normal: Vec3) -> f32 {
+        let weight = self.weight_on(follicle, local, normal);
+        match follicle {
+            Follicle::Moustache => weight * self.moustache.outline().crowd(local.x),
+            _ => weight,
+        }
+    }
+
+    /// [`Self::weights`] at a point of skin facing `normal`; see
+    /// [`Self::weight_on`].
+    #[must_use]
+    pub(crate) fn weights_on(&self, local: Vec3, normal: Vec3) -> [f32; 5] {
+        let at = At {
+            normal: Some(normal),
+            ..self.resolve(local)
+        };
+        Follicle::ALL.map(|follicle| self.region(follicle).weight(&at))
+    }
+
     /// The region with the most claim on a head-local point, if any has one.
     ///
     /// For anything that has to pick one — a false colour, a single-material
@@ -418,6 +479,7 @@ impl Follicles {
             lateral: across.abs() / half_width,
             facing,
             across,
+            normal: None,
         }
     }
 

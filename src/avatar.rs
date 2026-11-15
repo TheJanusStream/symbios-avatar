@@ -794,6 +794,20 @@ impl Avatar {
             .beast_head
             .as_ref()
             .map(|head| face::beast::chart_zones(&body, head, &zones));
+        // The pocket is left out of the face's chart, which flattens the face the
+        // way it runs (#473): the fold behind the lips is charted apart below.
+        let pocket: Vec<u32> = mouth
+            .as_ref()
+            .map(|mouth| {
+                mouth
+                    .roof
+                    .iter()
+                    .chain(&mouth.teeth)
+                    .chain(&mouth.floor)
+                    .copied()
+                    .collect()
+            })
+            .unwrap_or_default();
         let (mut charts, mut reserved) = unwrap_framed(
             &body,
             &rig,
@@ -801,6 +815,7 @@ impl Avatar {
             &config.uv,
             &wanted,
             skeleton.beast_head.as_ref().map(BeastCharts::of).as_ref(),
+            &pocket,
         );
         if let Some(mouth) = &mouth
             && let Some(rect) = reserved.pop()
@@ -904,13 +919,15 @@ impl Avatar {
         // On a human head only (#365): every follicle region is a human one —
         // scalp, brow, moustache, chin, flank — and a beast's measured head
         // used to be painted with a scalp's hair. A creature's fur is its own
-        // zones (#369).
+        // zones (#369). Cut as the record's styles draw them: a sculpted
+        // moustache keeps width 0's outline at wider widths, paint and solid
+        // alike (#475, `HairRecord::grown_regions`).
         let follicles = skull
             .as_ref()
             .zip(canon.as_ref())
             .filter(|_| rig.anatomy.human_head())
             .map(|(skull, canon)| {
-                crate::hair::Follicles::of(&rig, skull, canon, &hair_record.regions)
+                crate::hair::Follicles::of(&rig, skull, canon, &hair_record.grown_regions())
             });
         let complexion = config.complexion.unwrap_or(record.skin);
         let painted_hair = hair_record.painted();
@@ -1828,7 +1845,7 @@ fn place_charts(
 /// The parts are built in their joint's local space, which is what lets a
 /// renderer parent them; a texel, though, has to say where on the *body* it
 /// sits, because that is what the complexion is a function of.
-fn attached_in_body(
+pub(crate) fn attached_in_body(
     rig: &Rig,
     features: &Option<Features>,
     extremities: &Extremities,

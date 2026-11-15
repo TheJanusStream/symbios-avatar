@@ -113,6 +113,35 @@ pub(in crate::hair) fn loft(
     roots_colour: Vec3,
     tips_colour: Vec3,
 ) -> usize {
+    let binding = match head {
+        Some(head) => Binding::Over(head),
+        None => Binding::Rooted,
+    };
+    loft_bound(into, root, shape, &binding, roots_colour, tips_colour)
+}
+
+/// How a clump's vertices are bound to the rig.
+pub(in crate::hair) enum Binding<'a> {
+    /// Like the skin at the root, handed over to this joint, the head, as the
+    /// clump leaves the skin: a scalp's, a brow's and a beard's (#207).
+    Over(u16),
+    /// Like the skin at the root all the way: a beast's fur (#369).
+    Rooted,
+    /// Each vertex like the skin under it, the clump lying along the skin
+    /// the whole way: a moustache's, whose ends run down beside the mouth onto
+    /// the skin the jaw carries and must open with it (#475).
+    Under(&'a dyn Fn(Vec3) -> VertexSkin),
+}
+
+/// [`loft`], bound as `binding` says.
+pub(in crate::hair) fn loft_bound(
+    into: &mut PolyMesh,
+    root: &Root,
+    shape: &dyn Shape,
+    binding: &Binding,
+    roots_colour: Vec3,
+    tips_colour: Vec3,
+) -> usize {
     let length = shape.length(root);
     if length <= f32::EPSILON {
         return 0;
@@ -229,7 +258,8 @@ pub(in crate::hair) fn loft(
         for &(side, out, over) in drawn {
             let lane = if over { -1.0f32 } else { 1.0 };
             for edge in [-1.0f32, 1.0] {
-                into.positions.push(*at + side * (half * edge));
+                let corner = *at + side * (half * edge);
+                into.positions.push(corner);
                 // **The normal is rounded across the card though the card is
                 // flat** (#316). A flat card lit flat is a ribbon: one shade
                 // edge to edge, and a head of them reads as a bundle of dark
@@ -264,9 +294,16 @@ pub(in crate::hair) fn loft(
                 // It is a no-op wherever the skin is already the head's, which is
                 // the scalp, the brows and the upper lip — three of the five regions
                 // move not at all.
-                into.skin.push(match head {
-                    Some(head) => handed_over(root.skin, head, *along),
-                    None => root.skin,
+                into.skin.push(match binding {
+                    Binding::Over(head) => handed_over(root.skin, *head, *along),
+                    Binding::Rooted => root.skin,
+                    // Each edge of the card as the skin under that edge
+                    // (#475's fixer), not the spine's: across a mouth's
+                    // corner the jaw's hold on the skin changes within a
+                    // card's width, and an edge bound as the skin a few
+                    // millimetres off it tore from its neighbour as the jaw
+                    // opened.
+                    Binding::Under(under) => under(corner),
                 });
             }
         }

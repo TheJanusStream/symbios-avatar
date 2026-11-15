@@ -511,71 +511,169 @@ fn resolvable_at(spacing: f32, cycles: f32) -> f32 {
     }
 }
 
-/// The middling spacing of the texels the painted scalp covers: the median,
-/// over the head's own texels where the scalp's mask holds at least half, to
-/// within a step of its table, 2.7%.
+/// How far apart texel `index`, at `position`, lies from its neighbours on
+/// the skin, for the painted scalp's grain: its footprint's longer axis where
+/// the bake measured one (#473's second fixer), [`spacing_at`] elsewhere.
 ///
-/// **The finest the scalp's grain is drawn at** (#469's fixer). Every grain
-/// fades by how finely its texel is sampled, so that a grain the atlas cannot
-/// carry is not drawn as noise; but a person's head chart closes on its crown,
-/// whose last rings come out two to three times finer than the scalp below
-/// them, and there the stubble grain drew at full strength and at half or less
-/// everywhere else - from above, a disc of crisp speckle on a bald or shaved
-/// head. Faded no further than the scalp's middling texel allows, the crown's
-/// grain is the scalp's; the coarser half keeps its own, weaker fade. The
-/// brows and the beard keep theirs: no chart closes on them.
-///
-/// Counted into a fixed table of spacings rather than a list, so that a build
-/// allocates nothing for it; `0` where no texel is the scalp's.
-fn scalp_spacing(
+/// The step to a neighbouring texel is a property of the atlas, and at a
+/// chart's rim the neighbour across it is skin from somewhere else: the
+/// crown's rim texels read 23 to 95 mm there, so the grain faded out along
+/// every rim and a close frame showed the crown's outline as a thin line. A
+/// footprint is the surface's own, continuous over every seam
+/// (`super::bake::Footprint`).
+fn scalp_spacing_at(
     geometry: &AtlasGeometry,
     footprints: Option<&Footprints>,
-    hair: &PaintedLayer,
+    index: usize,
+    position: Vec3,
 ) -> f32 {
-    let mut counts = [0u32; SCALP_SPACING_BINS];
-    let mut total = 0u32;
-    let span = (SCALP_SPACING_MOST / SCALP_SPACING_LEAST).ln();
-    for (index, sample) in geometry.texels.iter().enumerate() {
-        let Some(texel) = sample else { continue };
-        if texel.zone != Zone::Head
-            || footprints.is_some_and(|all| all.on_a_part(index))
-            || hair
-                .follicles
-                .weight_in_body(Follicle::Scalp, texel.position)
-                < 0.5
-        {
-            continue;
-        }
-        let spacing = spacing_at(geometry, index, texel.position);
-        if spacing <= f32::EPSILON {
-            continue;
-        }
-        let at = ((spacing / SCALP_SPACING_LEAST).ln() / span * SCALP_SPACING_BINS as f32)
-            .clamp(0.0, (SCALP_SPACING_BINS - 1) as f32) as usize;
-        counts[at] += 1;
-        total += 1;
-    }
-    let mut run = 0u32;
-    for (at, &count) in counts.iter().enumerate() {
-        run += count;
-        if total > 0 && 2 * run >= total {
-            let middle = (at as f32 + 0.5) / SCALP_SPACING_BINS as f32;
-            return SCALP_SPACING_LEAST * (span * middle).exp();
-        }
-    }
-    0.0
+    footprints
+        .and_then(|all| all.get(index))
+        .map(|footprint| footprint.axes[0].length())
+        .filter(|spacing| *spacing > 0.0)
+        .unwrap_or_else(|| spacing_at(geometry, index, position))
 }
 
-/// How many steps [`scalp_spacing`]'s table counts spacings in, evenly by ratio
+/// The finest the painted scalp's grain is drawn at, by where on the head a
+/// texel lies (#469's fixer; #473's second fixer).
+///
+/// **Why a floor.** Every grain fades by how finely its texel is sampled, so
+/// that a grain the atlas cannot carry is not drawn as noise. A person's head
+/// is charted in three (`uv::PersonHead`): the face's chart reaches up over
+/// the front of the scalp and the crown's chart sits on top, both finer than
+/// the band round the back of the head between them; drawn at their own
+/// spacing, the stubble grain would be crisp on the crown and the front of the
+/// scalp and soft on the band - from above, a disc of speckle on a bald or
+/// shaved head, its rim the crown's seam (0.24.5's one chart closed on its
+/// crown, finer still).
+///
+/// **Taken from the band, laid on the other two.** The floor is the band's
+/// middling spacing ([`ScalpFloor::of`]), and it holds where the skin lies on
+/// the crown's chart or the face's, eased in across their seams with the band:
+/// so the grain reads as the band's wherever the band's would show beside it,
+/// and the band keeps its own, the scalp's coarsest. A head charted finer all
+/// over draws a finer grain all over. (Before, the floor was the whole
+/// scalp's eightieth percentile, laid everywhere: on long, narrow and large
+/// heads, whose bands are the coarsest, it took the mean grain resolution a
+/// fifth under 0.24.5's.)
+///
+/// **The whole of the face's chart, not a strip by its seam** (#473's third
+/// fixer). #473's second fixer held the floor on the face's chart only within
+/// half a radian of its seam with the band, and the front of the scalp above
+/// the forehead drew its grain at the face's own spacing: from above, a crisp
+/// band of speckle along the hairline, the front's grain resolution 1.29 to
+/// 1.41 times the back's on seeds 42, 175, 237 and 9 (seed 7 and slider draw
+/// u23 1.09 and 1.10). Held over all of it, 1.00 to 1.02 on all six, and the
+/// crown's 1.00 to 1.02 too. What it costs: draw u23, whose band is the
+/// coarsest of the heads read, draws its grain at 0.290 of its full strength
+/// on the mean over its scalp against 0.24.5's 0.298 - 0.24.5 averaged a
+/// crisp front and crown, 0.353 and 0.351, with a soft back, 0.235, where it
+/// is now 0.289 to 0.290 all over; every other head read draws it finer than
+/// 0.24.5 did (seeds 42, 175, 237, 9 and 7 0.706, 0.425, 0.483, 0.331 and
+/// 0.457 against 0.583, 0.374, 0.439, 0.312 and 0.413).
+#[derive(Clone, Copy, Debug, Default)]
+struct ScalpFloor {
+    /// The band's middling spacing, in metres; `0` where no texel is the
+    /// band's scalp.
+    spacing: f32,
+    /// The head's height above its joint, in metres: the highest of the
+    /// painted scalp's texels.
+    top: f32,
+}
+
+impl ScalpFloor {
+    /// The floor over `geometry`'s head, for the scalp of `hair`: the median
+    /// spacing ([`scalp_spacing_at`]) over the head's own texels where the
+    /// scalp's mask holds at least half and [`Self::share`] less than half, to
+    /// within a step of its table, 2.7%.
+    ///
+    /// Counted into a fixed table of spacings rather than a list, so that a
+    /// build allocates nothing for it.
+    fn of(geometry: &AtlasGeometry, footprints: Option<&Footprints>, hair: &PaintedLayer) -> Self {
+        let origin = hair.follicles.origin();
+        let scalp = |index: usize, texel: &super::bake::Texel| {
+            texel.zone == Zone::Head
+                && !footprints.is_some_and(|all| all.on_a_part(index))
+                && hair
+                    .follicles
+                    .weight_in_body(Follicle::Scalp, texel.position)
+                    >= 0.5
+        };
+        let top = geometry
+            .texels
+            .iter()
+            .enumerate()
+            .filter_map(|(index, sample)| sample.as_ref().filter(|texel| scalp(index, texel)))
+            .map(|texel| (texel.position - origin).y)
+            .fold(0.0f32, f32::max);
+        let mut floor = Self { spacing: 0.0, top };
+        let mut counts = [0u32; SCALP_SPACING_BINS];
+        let mut total = 0u32;
+        let span = (SCALP_SPACING_MOST / SCALP_SPACING_LEAST).ln();
+        for (index, sample) in geometry.texels.iter().enumerate() {
+            let Some(texel) = sample else { continue };
+            if !scalp(index, texel) || floor.share(texel.position - origin) >= 0.5 {
+                continue;
+            }
+            let spacing = scalp_spacing_at(geometry, footprints, index, texel.position);
+            if spacing <= f32::EPSILON {
+                continue;
+            }
+            let at = ((spacing / SCALP_SPACING_LEAST).ln() / span * SCALP_SPACING_BINS as f32)
+                .clamp(0.0, (SCALP_SPACING_BINS - 1) as f32) as usize;
+            counts[at] += 1;
+            total += 1;
+        }
+        let mut run = 0u32;
+        for (at, &count) in counts.iter().enumerate() {
+            run += count;
+            if total > 0 && 2 * run >= total {
+                let middle = (at as f32 + 0.5) / SCALP_SPACING_BINS as f32;
+                floor.spacing = SCALP_SPACING_LEAST * (span * middle).exp();
+                break;
+            }
+        }
+        floor
+    }
+
+    /// How much of the floor holds at `local`, head-local: one on the
+    /// crown's chart and all of the face's, nothing on the band between them,
+    /// eased over [`SCALP_FLOOR_EASE`] of the head's height and of a radian
+    /// across their seams (`uv::CROWN_CUT`, `uv::FACE_SIDE`).
+    fn share(&self, local: Vec3) -> f32 {
+        let ease = |t: f32| {
+            let t = t.clamp(0.0, 1.0);
+            t * t * (3.0 - 2.0 * t)
+        };
+        let height = local.y / self.top.max(f32::EPSILON);
+        let crown = ease((height - crate::uv::CROWN_CUT) / SCALP_FLOOR_EASE + 0.5);
+        let turn = local.x.atan2(local.z).abs();
+        let face = ease((crate::uv::FACE_SIDE - turn) / SCALP_FLOOR_EASE + 0.5);
+        crown.max(face)
+    }
+
+    /// The floor at `local`, head-local, in metres.
+    fn at(&self, local: Vec3) -> f32 {
+        self.spacing * self.share(local)
+    }
+}
+
+/// Over what share of the head's height, and of a radian round it, the
+/// scalp's floor eases in across the seams of the band round the back of the
+/// head ([`ScalpFloor::share`]). Provenance: **chosen** (#473's second fixer):
+/// about the reach of a footprint's own blend across a seam, a ring of faces.
+const SCALP_FLOOR_EASE: f32 = 0.1;
+
+/// How many steps [`ScalpFloor::of`]'s table counts spacings in, evenly by ratio
 /// from [`SCALP_SPACING_LEAST`] to [`SCALP_SPACING_MOST`]. Provenance:
 /// **chosen**: each step 2.7% wider than the last.
 const SCALP_SPACING_BINS: usize = 256;
 
-/// The finest spacing [`scalp_spacing`] tells apart, in metres: a twentieth of
+/// The finest spacing [`ScalpFloor::of`] tells apart, in metres: a twentieth of
 /// a millimetre, a fortieth of the crown's finest. Provenance: **chosen**.
 const SCALP_SPACING_LEAST: f32 = 5.0e-5;
 
-/// The coarsest spacing [`scalp_spacing`] tells apart, in metres: five
+/// The coarsest spacing [`ScalpFloor::of`] tells apart, in metres: five
 /// centimetres, past any head a person can be drawn with. Provenance:
 /// **chosen**.
 const SCALP_SPACING_MOST: f32 = 5.0e-2;
@@ -616,6 +714,9 @@ pub(crate) fn paint_skin_with(
     // twice the amplitude.
     let striation_field = Simplex::new(71);
     let wrinkle_field = Simplex::new(89);
+    // And the beard's ragged edge (#475), whose tufts must not line up with
+    // its own strands.
+    let ragged_field = Simplex::new(97);
     // How much of a fold's ink the body's own composition adds, at the middle
     // of the fold measure. One number for both terms, because they are the
     // same physical claim — this skin holds a crease the neutral body does not
@@ -623,10 +724,12 @@ pub(crate) fn paint_skin_with(
     // -old is not creased twice.
     let ink_gain = DEFINITION_INK * condition.definition + AGE_INK * condition.ageing;
     // The finest the painted scalp's grain is drawn at, where any scalp is
-    // painted: see [`scalp_spacing`].
+    // painted: see [`ScalpFloor`].
     let scalp_floor = hair
         .filter(|hair| hair.painted.of(Follicle::Scalp).shows())
-        .map_or(0.0, |hair| scalp_spacing(geometry, footprints, hair));
+        .map_or(ScalpFloor::default(), |hair| {
+            ScalpFloor::of(geometry, footprints, hair)
+        });
 
     for (index, sample) in geometry.texels.iter().enumerate() {
         let Some(texel) = sample else { continue };
@@ -742,8 +845,18 @@ pub(crate) fn paint_skin_with(
                     && hair.painted.of(follicle).shows()
             });
             let footprint = footprints.and_then(|all| all.get(index));
-            let feather =
-                bearded.then(|| feathered(hair.follicles, local, texel.normal, footprint));
+            let feather = bearded.then(|| {
+                feathered(
+                    hair.follicles,
+                    local,
+                    texel.normal,
+                    footprint,
+                    &Ragged {
+                        field: &ragged_field,
+                        reach: RAGGED * resolvable(RAGGED_ACROSS),
+                    },
+                )
+            });
             let mut beard = crate::hair::painted::Beard::default();
             for (slot, follicle) in Follicle::ALL.into_iter().enumerate() {
                 let paint = hair.painted.of(follicle);
@@ -771,10 +884,11 @@ pub(crate) fn paint_skin_with(
                 // cells of checkerboard. See [`Grain`].
                 let grain = crate::hair::painted::Grain::of(follicle);
                 let speckle = noise3(&stubble_field, p, grain.cells) * 0.5 + 0.5;
-                // The scalp's grain no finer than its middling texel: see
-                // [`scalp_spacing`].
+                // The scalp's grain no finer than the band round the back of
+                // the head beside it: see [`ScalpFloor`].
                 let resolved = if follicle == Follicle::Scalp {
-                    resolvable_at(spacing.max(scalp_floor), grain.cells)
+                    let spacing = scalp_spacing_at(geometry, footprints, index, p);
+                    resolvable_at(spacing.max(scalp_floor.at(local)), grain.cells)
                 } else {
                     resolvable(grain.cells)
                 };
@@ -791,9 +905,17 @@ pub(crate) fn paint_skin_with(
             }
             // The beard, laid once over whichever of its regions reach here.
             if let Some((held, tone, follicle)) = beard.laid() {
-                let grain = crate::hair::painted::Grain::of(follicle);
-                let speckle = noise3(&stubble_field, p, grain.cells) * 0.5 + 0.5;
-                let resolved = resolvable(grain.cells);
+                // **Strands, along the hair's own way** (#475): the beard's
+                // grain is stretched along the direction it grows and fine
+                // across it, so it reads as hairs lying on the skin rather
+                // than as a speckle. 0.24.5's moustache read that way by
+                // accident - stray texels from the bake (#472) - and this is
+                // the same look drawn on purpose, in body space, faded by what
+                // the atlas can carry across the strands.
+                let way = strand_way(hair.follicles, local);
+                let speckle =
+                    strand(&stubble_field, p, way, STRAND_ACROSS, STRAND_ALONG) * 0.5 + 0.5;
+                let resolved = resolvable(STRAND_ACROSS);
                 if let Some(cover) = crate::hair::painted::Cover::of(follicle) {
                     let hair = (tone * cover.shade(speckle, resolved)).clamp(Vec3::ZERO, Vec3::ONE);
                     colour = colour.lerp(hair, cover.amount(held, speckle, resolved));
@@ -953,17 +1075,43 @@ pub(crate) fn paint_skin_with(
 /// whole and an empty one empty, to the bit: the weights are normalised by the
 /// same sum, in the same order. No footprint, or one of no size, reads the
 /// centre alone.
+///
+/// **And at the end of each sample's strand as well** (#475): every place the
+/// masks are read is read again along the hair's way and the lesser kept, so
+/// the edge breaks into tufts; see [`RAGGED`].
 fn feathered(
     follicles: &Follicles,
     local: Vec3,
     normal: Vec3,
     footprint: Option<&Footprint>,
+    ragged: &Ragged,
 ) -> [f32; 5] {
+    // **Every sample read along its strand as well** (#475): see [`RAGGED`].
+    // Read inside the feather, so a tuft narrower than the texels the atlas
+    // has is averaged over them rather than drawn as a step.
+    let origin = follicles.origin();
+    let weights = |at: Vec3| {
+        let here = follicles.weights_on(at, normal);
+        if ragged.reach <= 0.0 || here.iter().all(|weight| *weight <= 0.0) {
+            return here;
+        }
+        let way = strand_way(follicles, at);
+        let tuft = strand(ragged.field, at + origin, way, RAGGED_ACROSS, RAGGED_ALONG);
+        let there = follicles.weights_on(
+            at + way * (reach_at(follicles, at, ragged.reach) * tuft),
+            normal,
+        );
+        let mut least = here;
+        for (into, other) in least.iter_mut().zip(there) {
+            *into = into.min(other);
+        }
+        least
+    };
     let Some([major, minor]) = footprint
         .map(|footprint| footprint.axes)
         .filter(|[major, _]| major.length() > f32::EPSILON)
     else {
-        return follicles.weights(local);
+        return weights(local);
     };
     // No flatter than `FEATHER_ROUNDNESS`, the fine way read at right angles
     // to the coarse one where the footprint has no width that way at all.
@@ -977,10 +1125,10 @@ fn feathered(
             * least
     };
     let (major, minor) = (major * FEATHER, minor * FEATHER);
-    let mut sum = follicles.weights(local);
+    let mut sum = weights(local);
     let mut total = 1.0f32;
     let mut take = |offset: Vec3, weight: f32| {
-        let weights = follicles.weights(local + offset);
+        let weights = weights(local + offset);
         for (into, from) in sum.iter_mut().zip(weights) {
             *into += from * weight;
         }
@@ -1069,6 +1217,130 @@ const FEATHER_INNER: f32 = 0.606_530_66;
 
 /// And two deviations out, `exp(-2)`.
 const FEATHER_OUTER: f32 = 0.135_335_28;
+
+/// A beard's ragged edge at one texel: its noise, and how far it reaches
+/// there, [`RAGGED`] faded by what the atlas can carry of its tufts.
+struct Ragged<'a> {
+    field: &'a Simplex,
+    reach: f32,
+}
+
+/// How far a beard's ragged edge reaches into it along its strands, in
+/// metres (#475).
+///
+/// **A hair's end is not on the mask's line.** Strands of one beard are not
+/// one length, so where a region ends the hairs end over a few millimetres,
+/// each strand at its own place along the way it grows: a fringe of bristles
+/// at a moustache's edges and a tufted edge under a jaw. Drawn as that
+/// sentence says: every place the masks are read is read a second time this
+/// far along the hair's own way, by a noise that varies fast across the
+/// strands and slowly along them, and keeps the lesser of the two. So the
+/// edge breaks into tufts in the direction the hair grows and never across
+/// it, and only ever INTO the region: a whole mask stays whole, an empty one
+/// empty, nothing paints past the masks' own edge (no halo, no hair on the
+/// lip's vermilion or up the nose's underside), and nothing steps - the edge
+/// is the mask's own smooth one, moved.
+///
+/// 0.24.5's moustache had a bristly edge by accident, from stray bake texels
+/// (#472); this one is on purpose. Faded by what the atlas can carry of the
+/// tufts, like every grain here.
+///
+/// Provenance: **tuned by render**, held under the beard feather's guards
+/// (`texture::beard_tests`).
+const RAGGED: f32 = 0.0050;
+
+/// How much of the moustache's own height the ragged edge may reach into it
+/// over the upper lip (#475's fixer).
+///
+/// **The band under the nose is a few millimetres tall** - 4.6 on the default
+/// face, between the nose's foot and the vermilion - and [`RAGGED`]'s 5 mm read
+/// along a strand that runs down over the lip reached clean across it: where
+/// a tuft drew deep, the band's whole height was read from bare skin and the
+/// lesser kept, so the middle of a moustache broke into wisps between two
+/// side tufts, and under a big nose all but vanished. Over the upper lip the
+/// edge reaches no more than this share of the patch's height there, either
+/// way, so a tuft breaks an edge and never the band.
+///
+/// Provenance: **tuned by render**.
+const RAGGED_LIP: f32 = 0.2;
+
+/// How far the ragged edge reaches at a head-local point: [`RAGGED`]'s reach,
+/// held over the upper lip to [`RAGGED_LIP`] of the moustache's height there.
+fn reach_at(follicles: &Follicles, local: Vec3, reach: f32) -> f32 {
+    let outline = follicles.outline();
+    let fade = outline.lip.fade.max(f32::EPSILON);
+    let over_the_lip = crate::face::smooth((local.y - outline.side()) / (2.0 * fade))
+        * (1.0 - crate::face::smooth((local.x.abs() - outline.lip.half) / fade));
+    let tall = (outline.ceiling(local.x) - outline.floor(local.x)).max(0.0);
+    let held = reach.min(tall * RAGGED_LIP);
+    reach + (held - reach) * over_the_lip
+}
+
+/// How many tufts the ragged edge has a metre across the strands.
+///
+/// A tuft every 3 mm or so, two to three of the face chart's texels: finer
+/// draws a texel-wide checker the feather then averages away, coarser reads
+/// as a wavy line rather than as hair.
+///
+/// Provenance: **tuned by render**.
+const RAGGED_ACROSS: f32 = 240.0;
+
+/// And along them: a tuft is long, as a lock of hair is.
+///
+/// Provenance: **tuned by render**.
+const RAGGED_ALONG: f32 = 50.0;
+
+/// How fine a beard's strand grain is across its strands, in cycles a metre.
+///
+/// About as fine as the face chart can draw: its texels are 0.8 to 1.3 mm
+/// over the beard (#473's charts), so 380 cycles is resolved there in full
+/// and faded under the jaw where they are coarser.
+///
+/// Provenance: **tuned by render**.
+const STRAND_ACROSS: f32 = 380.0;
+
+/// And along them: a strand five times as long as it is wide.
+///
+/// Provenance: **tuned by render**.
+const STRAND_ALONG: f32 = 75.0;
+
+/// How far a moustache's strands lean outward from straight down, as a share
+/// of their fall: a moustache is combed down and out from the philtrum.
+///
+/// Provenance: **tuned by render**.
+const MOUSTACHE_LEAN: f32 = 0.6;
+
+/// How wide the parting at the philtrum is that the lean turns over, in
+/// metres: the two halves of a moustache lean apart without a seam between.
+///
+/// Provenance: **tuned by render**.
+const LEAN_PARTING: f32 = 0.003;
+
+/// Which way a beard's hair runs at a head-local point, unit length.
+///
+/// Down, over the chin, the jaw and the ends of a moustache that run down
+/// beside the mouth; and down and out over the upper lip, parted at the
+/// philtrum. Continuous everywhere, because a strand grain sampled in a frame
+/// that jumps draws a seam.
+fn strand_way(follicles: &Follicles, local: Vec3) -> Vec3 {
+    let outline = follicles.outline();
+    let parted = local.x / (local.x * local.x + LEAN_PARTING * LEAN_PARTING).sqrt();
+    let above = crate::face::smooth(
+        (local.y - outline.side()) / (2.0 * outline.lip.fade).max(f32::EPSILON),
+    );
+    Vec3::new(MOUSTACHE_LEAN * parted * above, -1.0, 0.0).normalize()
+}
+
+/// Samples 3-D noise in a frame stretched along `way`: `across` cycles a
+/// metre across it and `along` along it, in `-1..=1`.
+fn strand(field: &Simplex, point: Vec3, way: Vec3, across: f32, along: f32) -> f32 {
+    let scaled = point * across + way * (way.dot(point) * (along - across));
+    field.get([
+        f64::from(scaled.x),
+        f64::from(scaled.y),
+        f64::from(scaled.z),
+    ]) as f32
+}
 
 /// Samples 3-D noise at `frequency` cycles per metre, in `-1..=1`.
 fn noise3(field: &Simplex, point: Vec3, frequency: f32) -> f32 {

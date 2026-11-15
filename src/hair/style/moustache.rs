@@ -24,13 +24,46 @@
 //! `a_moustache_stays_out_of_the_mouth_it_grows_over` checks it anyway, against
 //! the mouth's own cut seam rather than against this file's arithmetic.
 //!
-//! # Talk is the easy half, and it is worth saying why
+//! # Talk: bound as the skin under it
 //!
-//! Hair binds rigidly to the HEAD joint (`Avatar::meshes`), and the mouth's
-//! parting has a skull-held upper seam and a jaw-held lower one that are
-//! coincident at rest. So a moustache rides the skull with the upper lip, and
-//! when the jaw opens the lower lip moves AWAY from it. Rest is the worst case,
-//! and a moustache that clears the parting at rest clears it at every jaw angle.
+//! A moustache's whiskers lie along the skin, and since #475 each of their
+//! vertices is bound as the skin nearest it (`clump::loft`'s
+//! `Binding::Under`), blended across the nearest triangle so a card stretches
+//! no more than the skin under it does. Over the upper lip that skin is the skull's, and the
+//! corners' near them, so the moustache rides the upper lip and the lower lip
+//! moves AWAY from it as the jaw opens. The ends that run down beside the
+//! mouth toward the chin lie on skin the jaw carries, and open with it as the
+//! chin's beard does: bound like the root and handed to the head, as the other
+//! regions' hair is, a clump laid down that skin would stay where the closed
+//! mouth was.
+//!
+//! # The outline (#475)
+//!
+//! Every style grows on the same `Outline` the paint is masked by: a floor
+//! that follows the vermilion down to the mouth's corners, a ceiling under the
+//! nose, and a width from a Chaplin to ends that run down beside the mouth.
+//! The clearance is the same construction over that floor: a clump sweeps a
+//! share of the room over the floor under its root, which only falls outward,
+//! and a clump beside the mouth below its corners runs down rather than out,
+//! held off the ends' own bottom by the same share. Past the lips, the chevron
+//! and the pencil turn down as well - a moustache's ends turning down at the
+//! corners - and the handlebar does not: its ends carry on past the outline
+//! and curl up, from the top of the turned-down ends on a wide width. The
+//! pencil's line is a share of the way from the floor under it to the ceiling,
+//! so it curves down with the vermilion. The sculpted chevron walks its
+//! columns from each one's own floor down to the corners' height, and keeps
+//! width `0`'s outline at every width above it (the owner's decision, see
+//! `MoustacheStyle::widest`): its ends turn down to the corners and stop,
+//! one solid, rather than running on beside the mouth onto skin the jaw
+//! carries. Its flare carries the top of the moustache past the outline as
+//! before.
+//!
+//! **The count furnishes the lip, and the ends are paid for on top** (#475's
+//! fixer): a region's clump count is fixed whatever its area, so the ends took
+//! their roots from the lip until the count was read as the lip's own density
+//! (the clumps a style asks for across 0.24.5's band, at the height the band
+//! under the nose has) and the ends' as 0.24.5's density by area: see
+//! `Outline::spread_on`.
 //!
 //! # The three styles, and what separates them
 //!
@@ -51,7 +84,7 @@ use glam::Vec3;
 use serde::{Deserialize, Serialize};
 
 use super::super::clump::{LIFT, Root, Shape};
-use super::super::follicle::{Follicle, Follicles, moustache::Lip};
+use super::super::follicle::{Follicle, Follicles, moustache::Outline};
 use super::super::shell::face::{Sculpt, Sculpted};
 use super::{Cut, SCULPTED_PAINT, Style, clumps_for};
 use crate::plan::scaled;
@@ -84,6 +117,13 @@ pub enum MoustacheStyle {
     },
     /// A solid sculpted chevron riding the upper lip, never below the
     /// vermilion (#349).
+    ///
+    /// Keeps the classic outline of `width` `0` at every width above it, its
+    /// ends turning down to the mouth's corners and no further (#475, the
+    /// owner's decision): drawn down beside the mouth its ends read as two
+    /// flat slabs beside the band, and one solid round the corner would tear
+    /// there as the jaw opens, the skin below the corners being the jaw's.
+    /// Widths from `-1` to `0` narrow it as they narrow every style.
     Sculpted {
         /// How far its ends flare, `0` a chevron and `1` a handlebar turned up.
         #[serde(with = "crate::plan::scaled")]
@@ -186,6 +226,15 @@ const LIE: [f32; 3] = [0.86, 0.84, 0.96];
 /// moustache is a few hairs on a painted line, and drawing it with a full
 /// patch's worth of clumps would be drawing a thin chevron.
 ///
+/// **A half at #475, and back to a third**: the outline's ends turn down
+/// past the mouth's corners and take about a third of the patch's roots, so a
+/// third of the count left the line over the lip with about a fifth of a full
+/// patch's clumps - 34 of a pencil's vertices over the mouth on the default
+/// head, where the guard asks for more than 40. A half kept the line as
+/// furnished as it was, and was a symptom's fix: the region's count is now
+/// read as the lip's own density whatever the ends take
+/// (`Outline::spread_on`), so the pencil asks for its third again.
+///
 /// Provenance: **derived** from what each style is, **sized by the budget**
 ///.
 const CROWD: [f32; 3] = [1.0, 1.0, 0.34];
@@ -216,6 +265,15 @@ const WIDTH_SHARE: f32 = 0.55;
 ///
 /// Provenance: **derived** from the clearance it has to leave.
 const SAG: f32 = 0.8;
+
+/// The steepest a whisker sweeps down over its own length, in metres a metre.
+///
+/// Only binds where the floor is far below, which since #475 is beside the
+/// mouth: a moustache's ends turning down there sweep at about fifty degrees,
+/// and on the lip itself the room binds long before this does.
+///
+/// Provenance: **tuned by render**.
+const STEEPEST: f32 = 1.2;
 
 /// How much of that a moustache actually asks for at [`Cut::droop`] of one.
 ///
@@ -272,7 +330,8 @@ impl Style for MoustacheStyle {
             return Some(Box::new(Sculpted(Sculpt::Moustache { flare: *flare })));
         }
         let slot = self.slot()?;
-        let lip = head.lip();
+        let outline = head.outline();
+        let lip = outline.lip;
         // **A narrow length axis, as the brows have** (#205): a moustache hair
         // is a moustache hair, and the shared floor of a quarter would leave a
         // three-millimetre streak — a row of arrowheads on a lip. A record still
@@ -289,8 +348,11 @@ impl Style for MoustacheStyle {
             _ => 0.0,
         };
         Some(Box::new(Whisker {
-            lip,
-            reach: lip.half * REACH[slot] * length,
+            outline,
+            // A share of the lip a whisker grows along, not of the outline's
+            // whole extent (#475): the ends that turn down past the corners
+            // widen the outline and lengthen no hair.
+            reach: lip.half.min(outline.reach) * REACH[slot] * length,
             width: WIDTH[slot] * coarse,
             taper: TAPER[slot],
             line,
@@ -299,6 +361,7 @@ impl Style for MoustacheStyle {
             lie: LIE[slot],
             sag: SAG * (SWEEP_FROM + (1.0 - SWEEP_FROM) * cut.droop.clamp(0.0, 1.0)),
             curl,
+            turns: !matches!(self, Self::Handlebar { .. }),
         }))
     }
 
@@ -337,14 +400,33 @@ impl MoustacheStyle {
             Self::Pencil { .. } => Some(2),
         }
     }
+
+    /// The widest the region's `width` is read at under this style: `+1`,
+    /// the whole slider, for every style but [`Self::Sculpted`], which keeps
+    /// width `0`'s shape at every width above it.
+    ///
+    /// **The owner's decision** (#475, 2026-11-15): a wide sculpted moustache
+    /// was the band and two flat solids down the sides of the mouth, and read
+    /// as three planks; one solid round the corner would tear there as the jaw
+    /// opens, the skin beside the mouth below the corners being the jaw's and
+    /// the band's the skull's. So a sculpted moustache is the classic outline
+    /// whose ends turn down to the corners' height, one solid, while the
+    /// painted moustache and the grown styles still run down beside the mouth.
+    /// A one-piece wide solid is a follow-up of its own.
+    pub(crate) fn widest(self) -> f32 {
+        match self {
+            Self::Sculpted { .. } => 0.0,
+            Self::None | Self::Chevron | Self::Handlebar { .. } | Self::Pencil { .. } => 1.0,
+        }
+    }
 }
 
 /// One whisker: a streak running out along the lip, sweeping toward the mouth
 /// without ever reaching it.
 #[derive(Clone, Copy, Debug, PartialEq)]
 struct Whisker {
-    /// The patch this grew on, which is also where its floor is.
-    lip: Lip,
+    /// The outline this grew on, which is also where its floor is (#475).
+    outline: Outline,
     /// How far out along the lip one clump runs at full length, in metres.
     reach: f32,
     /// How wide one is at the root, in metres.
@@ -363,6 +445,10 @@ struct Whisker {
     sag: f32,
     /// How high its end rises past the corner, as a share of the half-width.
     curl: f32,
+    /// Whether the clumps rooted beside the mouth, past the lips, run down
+    /// rather than out: every style's but the handlebar's, whose ends curl up
+    /// past the corners instead (#475).
+    turns: bool,
 }
 
 impl Whisker {
@@ -374,6 +460,7 @@ impl Whisker {
     /// also carried it would mean the two were added and one of them subtracted
     /// again, which is how a droop axis comes to do nothing at all.
     fn run(&self, root: &Root) -> Vec3 {
+        let out = root.out;
         let side = if root.at.x < 0.0 { -1.0 } else { 1.0 };
         // **Round the face, not along world X** (#206). A lip is not flat: by
         // the corner of a mouth the skin's own normal has turned to face
@@ -390,8 +477,17 @@ impl Whisker {
         // than pointing at a wall.
         let azimuth = root.at.x.atan2(root.at.z);
         let round = Vec3::new(azimuth.cos(), 0.0, -azimuth.sin()) * side;
-        let out = root.out;
-        (round - out * round.dot(out)).normalize_or(round)
+        let round = (round - out * round.dot(out)).normalize_or(round);
+        // **And down, beside the mouth below its corners** (#475): an end that
+        // runs down to the chin is hair combed down, not out into the cheek.
+        // Down along the skin, which beside a mouth faces forward and out, so
+        // the tangent cannot degenerate there.
+        let down = self.down(root);
+        if down <= 0.0 {
+            return round;
+        }
+        let fall = (Vec3::NEG_Y - out * Vec3::NEG_Y.dot(out)).normalize_or(Vec3::NEG_Y);
+        (round * (1.0 - down) + fall * down).normalize_or(fall)
     }
 
     /// Where this clump's body sits, in head-local metres.
@@ -402,15 +498,41 @@ impl Whisker {
     /// climbs toward it and one rooted above it descends — and the room a sweep
     /// may spend is the room the clump has at its lowest, not at either end
     /// alone.
+    ///
+    /// **The line follows the outline** (#475): a share of the way from the
+    /// floor under the root to the ceiling over it, so a pencil's line curves
+    /// down with the vermilion to the corners rather than running level.
     fn seat(&self, root: &Root) -> f32 {
-        let line = self.lip.height(self.line);
+        let floor = self.outline.floor(root.at.x);
+        let ceiling = self.outline.ceiling(root.at.x).max(floor);
+        let line = floor + (ceiling - floor) * self.line;
         root.at.y + (line - root.at.y) * self.gather.clamp(0.0, 1.0)
     }
 
-    /// How far this clump's SPINE stands above the vermilion at its lowest, in
-    /// metres.
+    /// How much this clump runs down rather than out, `0` to `1` (#475).
+    ///
+    /// Down beside the mouth below its corners, where the ends of a wide
+    /// moustache run to the chin; and, for every style but the handlebar, down
+    /// past the lips at any height, which is a moustache's ends turning down
+    /// at the corners rather than sweeping out into the cheek.
+    fn down(&self, root: &Root) -> f32 {
+        let below = self.outline.down(root.at);
+        if self.turns {
+            below.max(self.outline.beside(root.at.x))
+        } else {
+            below
+        }
+    }
+
+    /// How far this clump's SPINE stands above the floor under its root at its
+    /// lowest, in metres.
+    ///
+    /// The floor is the outline's: the vermilion's top over the lips, falling
+    /// toward the corners, and the ends' bottom beside the mouth (#475). It
+    /// only falls outward, and no clump runs inward, so the floor under the
+    /// root is the highest the clump passes over.
     fn clear(&self, root: &Root) -> f32 {
-        (root.at.y.min(self.seat(root)) - self.lip.vermilion).max(0.0)
+        (root.at.y.min(self.seat(root)) - self.outline.floor(root.at.x)).max(0.0)
     }
 
     /// How much of that is left for the sweep, once the card's own half-width is
@@ -456,7 +578,27 @@ impl Shape for Whisker {
         // corner has only the room that is left, or it hangs in the air beside
         // the cheek. The handlebar's own room is most of a half-width past the
         // patch, which is what its ends are.
-        let room = (self.lip.half * (1.0 + self.overshoot) - root.at.x.abs()).max(0.0);
+        let lateral = (self.outline.lip.half * (1.0 + self.overshoot) - root.at.x.abs()).max(0.0);
+        // A clump running down beside the mouth has the ends' own bottom as its
+        // room instead (#475), and spends no more of it than `SAG` lets a sweep:
+        // its fall is `down` of its run's own drop, so its length is held to
+        // the room over that. **And no more of the lateral room than its run
+        // still spends sideways** (#475's fixer): a clump half turned down
+        // runs half out, and held only to the vertical room it ran past the
+        // patch's edge by as much again.
+        let down = self.down(root);
+        let room = if down > 0.0 {
+            let drop = self.run(root).y.abs().max(f32::EPSILON) * down;
+            let vertical = SAG * (root.at.y - self.outline.bottom).max(0.0) / drop;
+            let sideways = if down < 1.0 {
+                lateral / (1.0 - down)
+            } else {
+                f32::MAX
+            };
+            vertical.min(sideways)
+        } else {
+            lateral
+        };
         let length = (self.reach * self.share(root)).min(room);
         if length < self.reach * LEAST_WORTH {
             return 0.0;
@@ -480,7 +622,13 @@ impl Shape for Whisker {
         //
         // Quadratic in the travel, because a whisker sweeps hardest at its end,
         // which is also what keeps the row's inner half lying along the lip.
-        let sink = self.room(root) * self.sag * along * along;
+        //
+        // No steeper than [`STEEPEST`] over its own length, for a clump whose
+        // room is the ends' bottom beside the mouth rather than a lip a few
+        // millimetres under it (#475): a sweep of the whole of that would be a
+        // clump stood on its end. A share of the room still, so still a
+        // construction.
+        let sink = (self.room(root) * self.sag).min(length * STEEPEST) * along * along;
         // Standing off the skin as it goes, which is what `lie` is: a moustache
         // lying flat is a painted one, and one that does not is bristle. The
         // engine's own root lift rides in the same direction and so is written
@@ -497,7 +645,13 @@ impl Shape for Whisker {
         // that put a full chevron 2.9 mm below the vermilion — under its own
         // paint — while the synthetic roots this file's other test uses, whose
         // normals point straight out, saw nothing at all.
-        let rise = Vec3::Y * (gather - sink - run.y * travel - stand.y);
+        //
+        // **Except down a mouth's side** (#475), where the run's own fall IS
+        // the clump's motion: there `down` of the run's drop is kept, and the
+        // gather and the sweep give way to it. See [`Shape::length`] for how
+        // that fall is held off the ends' bottom.
+        let down = self.down(root);
+        let rise = Vec3::Y * ((1.0 - down) * (gather - sink - run.y * travel) - stand.y);
         // And the handlebar's own end: past the patch's outer edge the clump
         // turns up and away, and nowhere else does it do anything at all.
         //
@@ -515,10 +669,10 @@ impl Shape for Whisker {
         // How far past the patch's outer edge the clump has actually come,
         // which with a run that curves round the face is not the same as how
         // far it has travelled.
-        let past = (self.lip.along(root.at.x + run.x * travel) - 1.0).max(0.0);
+        let past = (self.outline.lip.along(root.at.x + run.x * travel) - 1.0).max(0.0);
         let curl = Vec3::Y
             * (self.curl
-                * self.lip.half
+                * self.outline.lip.half
                 * crate::face::smooth(past / self.overshoot.max(f32::EPSILON)));
         root.at + run * travel + rise + stand + curl
     }
@@ -556,15 +710,23 @@ mod tests {
     use super::*;
     use crate::face::{Canon, Skull};
     use crate::hair::follicle::FollicleParams;
+    use crate::hair::follicle::moustache::Lip;
     use crate::{Archetype, Avatar, AvatarRecord};
 
     /// The regions of one built head, which a style is fitted against.
     fn head() -> Follicles {
+        head_of_width(0.0)
+    }
+
+    /// The same, with the moustache's width axis at `width` (#475).
+    fn head_of_width(width: f32) -> Follicles {
         let record = AvatarRecord::new("Moustache", Archetype::default());
         let avatar = Avatar::build_for_shape(&record).expect("a biped builds");
         let skull = Skull::measure(&avatar.parts.body, &avatar.rig).expect("a head measures");
         let canon = Canon::measure(&avatar.rig, &skull, &record.eyes);
-        Follicles::of(&avatar.rig, &skull, &canon, &FollicleParams::default())
+        let mut params = FollicleParams::default();
+        params.moustache.width = width;
+        Follicles::of(&avatar.rig, &skull, &canon, &params)
     }
 
     /// A root in the lip's band, a share of the way up it and out along it.
@@ -598,6 +760,9 @@ mod tests {
         ]
     }
 
+    /// How far apart two readings of one edge may be by rounding, in metres.
+    const ROUNDING: f32 = 1.0e-6;
+
     #[test]
     fn no_whisker_reaches_the_vermilion_at_any_setting() {
         // **The claim this file is built around, and it is asserted at the
@@ -607,51 +772,96 @@ mod tests {
         // [`SAG`]'s unspent fifth, so what this measures is that the
         // construction holds — including for roots rooted ON the border, where
         // the room is nothing and the sweep must be nothing too.
-        let head = head();
-        let lip = head.lip();
+        //
+        // **The floor is the outline's since #475**: the vermilion's top as it
+        // curves down to the mouth's corners, and the ends' bottom beside the
+        // mouth, so a card's lower edge is asked against the floor under its
+        // own root - the highest it passes over, no clump running inward - and
+        // against the lips themselves, the lens the outline keeps them out
+        // with. At every width from a Chaplin to a horseshoe, with roots down
+        // the ends beside the mouth as well as across the lip.
         let mut grown = 0usize;
-        for style in every_style() {
-            for droop in [0.0f32, 0.5, 1.0] {
-                let cut = Cut {
-                    droop,
-                    length: 1.0,
-                    thickness: 1.0,
-                    density: 1.0,
-                };
-                let shape = style
-                    .shape(&cut, Follicle::Moustache, &head)
-                    .expect("a grown style has a shape");
-                for up in [0.0f32, 0.15, 0.5, 0.85, 1.0] {
-                    for out in [0.0f32, 0.3, 0.6, 0.9] {
-                        // **Over a range of surface tilts**, because the drop
-                        // the normal carries is what the built head caught and
-                        // the fixture did not. A lip faces forward and down by
-                        // about this much; the ends of the sweep are a flat one
-                        // and a steep one.
-                        for tilt in [0.0f32, -0.3, -0.55, -0.9] {
-                            let root = root_facing(&lip, up, out, tilt);
-                            if shape.length(&root) <= 0.0 {
-                                continue;
-                            }
-                            grown += 1;
-                            for step in 0..=24 {
-                                let along = step as f32 / 24.0;
-                                // **The card's lower EDGE, not its spine.** A
-                                // whisker's card is a ribbon whose width lies
-                                // vertically, so half of it hangs below the
-                                // curve `at` describes — and a test on the
-                                // spine passes while the moustache is on the
-                                // lip (#206).
-                                let at = shape.at(&root, along);
-                                let edge = at.y - shape.width_at(&root, along);
-                                assert!(
-                                    edge >= lip.vermilion,
-                                    "a {style:?} whisker rooted {up} up and {out} out on skin \
-                                     tilted {tilt} at droop {droop} reaches {:.2} mm below the \
-                                     vermilion",
-                                    (lip.vermilion - edge) * 1000.0
-                                );
-                            }
+        for width in [-1.0f32, 0.0, 1.0] {
+            let head = head_of_width(width);
+            let outline = head.outline();
+            let lip = outline.lip;
+            let mut roots = Vec::new();
+            for up in [0.0f32, 0.15, 0.5, 0.85, 1.0] {
+                for out in [0.0f32, 0.3, 0.6, 0.9] {
+                    // **Over a range of surface tilts**, because the drop the
+                    // normal carries is what the built head caught and the
+                    // fixture did not. A lip faces forward and down by about
+                    // this much; the ends of the sweep are a flat one and a
+                    // steep one.
+                    for tilt in [0.0f32, -0.3, -0.55, -0.9] {
+                        let mut root = root_facing(&lip, up, out, tilt);
+                        // Seated on the floor under it where the floor falls
+                        // below the midline's band, so the roots at `up` 0 are
+                        // ON the border wherever they are.
+                        let floor = outline.floor(root.at.x);
+                        root.at.y = floor + (lip.nostrils.max(floor) - floor) * up;
+                        roots.push(root);
+                    }
+                }
+            }
+            // And down the ends beside the mouth, from the corners' height to
+            // the ends' bottom, across the end.
+            for down in [0.0f32, 0.3, 0.6, 0.95, 1.0] {
+                for across in [0.0f32, 0.5, 1.0] {
+                    let x = outline.reach + (lip.half - outline.reach).max(0.0) * across;
+                    // Never under the floor there, which a Chaplin holds level
+                    // at the vermilion's height (#475's fixer): its patch has
+                    // no ends, and a root below its floor is one the mask
+                    // grows none of.
+                    let y = (outline.side() + (outline.bottom - outline.side()) * down)
+                        .max(outline.floor(x));
+                    roots.push(Root {
+                        at: Vec3::new(x, y, 0.07),
+                        out: Vec3::new(0.6, -0.1, 0.8).normalize(),
+                        weight: 1.0,
+                        skin: Default::default(),
+                    });
+                }
+            }
+            for style in every_style() {
+                for droop in [0.0f32, 0.5, 1.0] {
+                    let cut = Cut {
+                        droop,
+                        length: 1.0,
+                        thickness: 1.0,
+                        density: 1.0,
+                    };
+                    let shape = style
+                        .shape(&cut, Follicle::Moustache, &head)
+                        .expect("a grown style has a shape");
+                    for root in &roots {
+                        if shape.length(root) <= 0.0 {
+                            continue;
+                        }
+                        grown += 1;
+                        let floor = outline.floor(root.at.x);
+                        for step in 0..=24 {
+                            let along = step as f32 / 24.0;
+                            // **The card's lower EDGE, not its spine.** A
+                            // whisker's card is a ribbon whose width lies
+                            // vertically, so half of it hangs below the curve
+                            // `at` describes - and a test on the spine passes
+                            // while the moustache is on the lip (#206).
+                            let at = shape.at(root, along);
+                            let edge = at.y - shape.width_at(root, along);
+                            assert!(
+                                // A micron for rounding: a root ON the floor
+                                // sits on the lens's own edge, which the two
+                                // readings put a few nanometres apart.
+                                edge >= floor - ROUNDING && outline.clear(at.x, edge) >= -ROUNDING,
+                                "a {style:?} whisker at width {width} rooted at ({:+.1}, \
+                                 {:+.1}) mm at droop {droop} reaches {:.2} mm below the floor \
+                                 under it, {:.2} mm outside the lips",
+                                root.at.x * 1000.0,
+                                root.at.y * 1000.0,
+                                (floor - edge) * 1000.0,
+                                outline.clear(at.x, edge) * 1000.0
+                            );
                         }
                     }
                 }
@@ -660,7 +870,7 @@ mod tests {
         // And that it looked at anything: a sweep whose every root is declined
         // asserts nothing at all (#210).
         assert!(
-            grown > 500,
+            grown > 1500,
             "only {grown} of the sweep's roots grew a whisker to measure"
         );
     }
@@ -787,124 +997,584 @@ mod tests {
         // moustache binds to the head; the solid binds as the skin under it
         // does, which measured is the head's on every vertex - so the posed
         // solid is asserted to be the rest one.
+        //
+        // **And at `width` `+1`, where it is width `0`'s solid** (#475, the
+        // owner's decision; `MoustacheStyle::widest`): its ends turn down to
+        // the corners' height and stop, so the solid at `+1` is asserted to be
+        // the one at `0`, vertex for vertex, and to keep every rule above
+        // there, the jaw's included. The wide solid #475 first drew walked
+        // two more solids down beside the mouth onto skin the jaw carries, and
+        // fails here: on the default head at `+1` 944 vertices against 448,
+        // 408 of them below the corners.
         use crate::anim::Pose;
         use glam::Quat;
         for seed in [None, Some(42), Some(7)] {
             for flare in [0.0f32, 0.5, 1.0] {
-                let mut record = AvatarRecord::new("Sculpted", Archetype::default());
-                if let Some(seed) = seed {
-                    record.reroll(seed);
+                // The solid at width `0`, which the one at `+1` must be.
+                let mut classic: Option<Vec<Vec3>> = None;
+                for width in [0.0f32, 1.0] {
+                    let mut record = AvatarRecord::new("Sculpted", Archetype::default());
+                    if let Some(seed) = seed {
+                        record.reroll(seed);
+                    }
+                    let mut regions = record.hair.regions;
+                    regions.moustache.width = width;
+                    record.hair = crate::hair::HairRecord {
+                        regions,
+                        moustache: crate::hair::Tress {
+                            style: MoustacheStyle::Sculpted { flare },
+                            ..Default::default()
+                        },
+                        ..crate::hair::HairRecord::bald()
+                    };
+                    record.sanitize();
+                    let avatar = Avatar::build_for_shape(&record).expect("a biped builds");
+                    let mouth = avatar.parts.mouth.as_ref().expect("an openable mouth");
+                    let skull =
+                        Skull::measure(&avatar.parts.body, &avatar.rig).expect("a head measures");
+                    let canon = Canon::measure(&avatar.rig, &skull, &record.eyes);
+                    // The regions as the build cuts them, which is width `0`'s
+                    // moustache at `+1`.
+                    let follicles =
+                        Follicles::of(&avatar.rig, &skull, &canon, &record.hair.grown_regions());
+                    let outline = follicles.outline();
+                    let origin = follicles.origin();
+                    let hair = avatar
+                        .parts
+                        .hair
+                        .as_ref()
+                        .expect("a sculpted moustache grows");
+                    let positions = &hair.mesh.positions;
+                    assert!(
+                        positions.len() > 100,
+                        "seed {seed:?} flare {flare}: the solid has {} vertices",
+                        positions.len()
+                    );
+                    match &classic {
+                        None => classic = Some(positions.clone()),
+                        Some(classic) => assert!(
+                            classic == positions,
+                            "seed {seed:?} width {width} flare {flare}: the solid is not width 0's: \
+                         {} vertices against {}, {} of them below the mouth's corners",
+                            positions.len(),
+                            classic.len(),
+                            positions.iter().filter(|at| at.y < outline.side()).count()
+                        ),
+                    }
+                    // **Against the floor under each vertex since #475**: the
+                    // vermilion's top as it curves down to the corners, and the
+                    // lips' own lens, rather than one level line.
+                    let lowest = positions
+                        .iter()
+                        .map(|at| at.y - outline.floor(at.x))
+                        .fold(f32::MAX, f32::min);
+                    let inside = positions
+                        .iter()
+                        .map(|at| outline.clear(at.x, at.y))
+                        .fold(f32::MAX, f32::min);
+                    assert!(
+                        lowest >= 0.0 && inside >= 0.0,
+                        "seed {seed:?} width {width} flare {flare}: the solid reaches {:.2} mm below \
+                     the floor under it and {:.2} mm into the lips",
+                        -lowest * 1000.0,
+                        -inside * 1000.0
+                    );
+                    let seam: Vec<Vec3> = mouth
+                        .upper
+                        .iter()
+                        .map(|at| avatar.parts.body.positions[*at as usize] - origin)
+                        .collect();
+                    let mut checked = 0usize;
+                    for at in positions {
+                        let Some(under) = seam
+                            .iter()
+                            .filter(|point| (point.x - at.x).abs() < 0.002)
+                            .map(|point| point.y)
+                            .reduce(f32::max)
+                        else {
+                            continue;
+                        };
+                        checked += 1;
+                        assert!(
+                            at.y > under,
+                            "seed {seed:?} width {width} flare {flare}: the solid hangs {:.2} mm below \
+                         the mouth's cut at x {:+.1} mm",
+                            (under - at.y) * 1000.0,
+                            at.x * 1000.0
+                        );
+                    }
+                    assert!(
+                        checked > 40,
+                        "seed {seed:?} flare {flare}: only {checked} vertices had any mouth under them"
+                    );
+                    // And that the rule BINDS: the solid rides the lip down to within
+                    // a few millimetres of the vermilion (1.1 to 1.5 mm measured),
+                    // so a floor asserted over it is not a floor over thin air.
+                    assert!(
+                        lowest < RIDES_THE_LIP,
+                        "seed {seed:?} flare {flare}: the solid's lowest point is {:.2} mm over the \
+                     floor under it, which is not riding the lip",
+                        lowest * 1000.0
+                    );
+                    // The jaw opens and the moustache does not move.
+                    let tip = (0..avatar.rig.len())
+                        .find(|&tip| {
+                            avatar.rig.joints[tip].marker
+                                && avatar.rig.joints[tip]
+                                    .parent
+                                    .is_some_and(|at| avatar.rig.joints[at].marker)
+                        })
+                        .expect("a humanoid has a jaw");
+                    let pivot = avatar.rig.joints[tip]
+                        .parent
+                        .expect("the tip hangs off the pivot");
+                    let mut open = Pose::rest(&avatar.rig);
+                    open.rotations[pivot] = Quat::from_rotation_x(20f32.to_radians());
+                    let posed = |pose: &Pose| {
+                        avatar
+                            .posed(pose, 0.0)
+                            .into_iter()
+                            .find(|mesh| mesh.kind == crate::MeshKind::Hair)
+                            .expect("the moustache is drawn")
+                            .mesh
+                            .positions
+                    };
+                    let (rest, opened) = (posed(&Pose::rest(&avatar.rig)), posed(&open));
+                    let moved = rest
+                        .iter()
+                        .zip(&opened)
+                        .map(|(one, two)| one.distance(*two))
+                        .fold(0.0f32, f32::max);
+                    assert!(
+                        moved < 0.0001,
+                        "seed {seed:?} width {width} flare {flare}: the jaw at 20 degrees moved the \
+                     moustache {:.2} mm",
+                        moved * 1000.0
+                    );
                 }
-                let regions = record.hair.regions;
-                record.hair = crate::hair::HairRecord {
-                    regions,
-                    moustache: crate::hair::Tress {
-                        style: MoustacheStyle::Sculpted { flare },
-                        ..Default::default()
+            }
+        }
+    }
+
+    #[test]
+    fn a_moustache_lies_on_its_skin_and_out_of_the_mouth_with_the_jaw_open() {
+        // **Talk, at every width** (#475). The ends of a wide moustache run
+        // down beside the mouth onto skin the jaw carries, so a moustache is
+        // no longer the region that rides the skull alone: it has to open with
+        // the mouth where its skin does, and stay out of the lips and the
+        // parting while it does. Grown on the default head at a Chaplin, a
+        // classic and a horseshoe, every style and the sculpted solid at both
+        // ends of its flare, posed shut and with the jaw open 25 degrees (the
+        // chin's own skin moves 44.7 mm there):
+        //
+        // - over the mouth, every vertex is above the mouth's own upper seam,
+        //   posed (the existing guard's reading, now with the jaw open too);
+        // - below the mouth's corners, every vertex is beside the mouth, out
+        //   past the corners, posed: none in the parting;
+        // - and no vertex moves off or into the skin under it as the jaw opens
+        //   by more than [`OFF_THE_SKIN`]: none floating where the closed mouth
+        //   was.
+        //
+        // - and at `+1` a grown style's ends ARE beside the mouth below the
+        //   corners, and move with the jaw by more than [`ENDS_OPEN`];
+        // - while the sculpted solid has NO vertex below the corners at any
+        //   width (#475, the owner's decision: it keeps width `0`'s outline,
+        //   `MoustacheStyle::widest`). Its wide ends walked as solids of
+        //   their own read 680 vertex readings below the corners at `0.5`,
+        //   the farthest moving 10.1 mm with the jaw.
+        //
+        // Measured: worst 0.43 mm of change off the skin, the closest 4.30 mm
+        // over the seam, 4.10 mm out past a corner; at `+1` 523 to 1604 vertex
+        // readings below the corners, the farthest moving 32.4 to 34.0 mm; no
+        // edge grown past the skin under it by more than 1.20 times. Before
+        // #475 no vertex reached below the corners at any width. Bound like
+        // their roots and handed to the head, as every other region's hair is,
+        // a horseshoe chevron's ends read 2.83 mm off the skin with the jaw
+        // open; bound station by station to the nearest skin vertex, as #475
+        // first bound them, an edge grew 2.62 times past its skin.
+        //
+        // **At `0.5` as well** since #475's second fixer, where the critic of
+        // #475's fixer saw cards tear: now worst 0.41 mm off the skin, 4.30 mm
+        // over the seam, 3.87 mm past a corner, no edge past 1.13 times its
+        // skin over the four widths. The sculpted solid bound as the skin its
+        // columns' rays left read 1.30 there (5.24 mm grown to 7.18 over skin
+        // that grew 1.05 times); its stations are now bound as the skin under
+        // them (`shell::face`'s `loft`).
+        //
+        // **Since the owner's decision** the sculpted solid is width `0`'s at
+        // `0.5` and `+1`: worst 0.41 mm off the skin, 5.16 mm over the seam,
+        // 3.87 mm past a corner, no edge past 1.09 times its skin; the grown
+        // styles at `+1` 378 to 1114 vertex readings below the corners, the
+        // farthest moving 33.4 to 34.0 mm.
+        use crate::anim::Pose;
+        use glam::Quat;
+        let styles = [
+            MoustacheStyle::Chevron,
+            MoustacheStyle::Handlebar { sweep: 0.6 },
+            MoustacheStyle::Pencil { ride: 0.4 },
+            MoustacheStyle::Sculpted { flare: 0.0 },
+            MoustacheStyle::Sculpted { flare: 1.0 },
+        ];
+        let (mut drift, mut over, mut beside) = (0.0f32, f32::MAX, f32::MAX);
+        let mut stretch = 1.0f32;
+        for width in [-1.0f32, 0.0, 0.5, 1.0] {
+            for style in styles {
+                // How many vertices lie beside the mouth below its corners, and
+                // how far the farthest of them moves as the jaw opens.
+                let (mut down, mut opened) = (0usize, 0.0f32);
+                let mut record = AvatarRecord::new("Talking", Archetype::default());
+                let mut hair = crate::hair::HairRecord::bald();
+                hair.regions.moustache.width = width;
+                hair.moustache = crate::hair::Tress {
+                    style,
+                    cut: Cut {
+                        length: 1.0,
+                        droop: 1.0,
+                        density: 1.0,
+                        thickness: 1.0,
                     },
-                    ..crate::hair::HairRecord::bald()
+                    ..Default::default()
                 };
+                record.hair = hair;
                 record.sanitize();
                 let avatar = Avatar::build_for_shape(&record).expect("a biped builds");
                 let mouth = avatar.parts.mouth.as_ref().expect("an openable mouth");
-                let skull =
-                    Skull::measure(&avatar.parts.body, &avatar.rig).expect("a head measures");
-                let canon = Canon::measure(&avatar.rig, &skull, &record.eyes);
-                let follicles = Follicles::of(&avatar.rig, &skull, &canon, &record.hair.regions);
-                let lip = follicles.lip();
-                let origin = follicles.origin();
-                let hair = avatar
-                    .parts
-                    .hair
-                    .as_ref()
-                    .expect("a sculpted moustache grows");
-                let positions = &hair.mesh.positions;
-                assert!(
-                    positions.len() > 100,
-                    "seed {seed:?} flare {flare}: the solid has {} vertices",
-                    positions.len()
-                );
-                let lowest = positions.iter().map(|at| at.y).fold(f32::MAX, f32::min);
-                assert!(
-                    lowest >= lip.vermilion,
-                    "seed {seed:?} flare {flare}: the solid reaches {:.2} mm below the vermilion",
-                    (lip.vermilion - lowest) * 1000.0
-                );
-                let seam: Vec<Vec3> = mouth
-                    .upper
-                    .iter()
-                    .map(|at| avatar.parts.body.positions[*at as usize] - origin)
-                    .collect();
-                let mut checked = 0usize;
-                for at in positions {
-                    let Some(under) = seam
-                        .iter()
-                        .filter(|point| (point.x - at.x).abs() < 0.002)
-                        .map(|point| point.y)
-                        .reduce(f32::max)
-                    else {
-                        continue;
-                    };
-                    checked += 1;
-                    assert!(
-                        at.y > under,
-                        "seed {seed:?} flare {flare}: the solid hangs {:.2} mm below the mouth's \
-                         cut at x {:+.1} mm",
-                        (under - at.y) * 1000.0,
-                        at.x * 1000.0
-                    );
-                }
-                assert!(
-                    checked > 40,
-                    "seed {seed:?} flare {flare}: only {checked} vertices had any mouth under them"
-                );
-                // And that the rule BINDS: the solid rides the lip down to within
-                // a few millimetres of the vermilion (1.1 to 1.5 mm measured),
-                // so a floor asserted over it is not a floor over thin air.
-                let spare = lowest - lip.vermilion;
-                assert!(
-                    spare < RIDES_THE_LIP,
-                    "seed {seed:?} flare {flare}: the solid's lowest point is {:.2} mm over the \
-                     vermilion, which is not riding the lip",
-                    spare * 1000.0
-                );
-                // The jaw opens and the moustache does not move.
-                let tip = (0..avatar.rig.len())
+                let rig = &avatar.rig;
+                let tip = (0..rig.len())
                     .find(|&tip| {
-                        avatar.rig.joints[tip].marker
-                            && avatar.rig.joints[tip]
+                        rig.joints[tip].marker
+                            && rig.joints[tip]
                                 .parent
-                                .is_some_and(|at| avatar.rig.joints[at].marker)
+                                .is_some_and(|at| rig.joints[at].marker)
                     })
                     .expect("a humanoid has a jaw");
-                let pivot = avatar.rig.joints[tip]
-                    .parent
-                    .expect("the tip hangs off the pivot");
-                let mut open = Pose::rest(&avatar.rig);
-                open.rotations[pivot] = Quat::from_rotation_x(20f32.to_radians());
-                let posed = |pose: &Pose| {
-                    avatar
-                        .posed(pose, 0.0)
+                let pivot = rig.joints[tip].parent.expect("the tip hangs off the pivot");
+                // The body's faces near the mouth, by index, so the posed and
+                // the rest surfaces are read over the same faces.
+                let body = &avatar.parts.body;
+                let centre = body
+                    .positions
+                    .iter()
+                    .enumerate()
+                    .filter(|(at, _)| mouth.welds.contains(&(*at as u32)))
+                    .map(|(_, at)| *at)
+                    .sum::<Vec3>()
+                    * 0.5;
+                let near: Vec<usize> = (0..body.face_count())
+                    .filter(|&face| {
+                        body.positions[body.faces[face][0] as usize].distance(centre) < 0.07
+                    })
+                    .collect();
+                let faces = avatar
+                    .posed(&Pose::rest(rig), 0.0)
+                    .into_iter()
+                    .find(|mesh| mesh.kind == crate::MeshKind::Hair)
+                    .expect("the moustache is drawn")
+                    .mesh
+                    .faces;
+                let pose = |degrees: f32| {
+                    let mut pose = Pose::rest(rig);
+                    pose.rotations[pivot] = Quat::from_rotation_x(degrees.to_radians());
+                    let mut skin = body.clone();
+                    skin.skin = avatar.parts.weights.vertices.clone();
+                    let skin = pose.forward(rig).deform_mesh(rig, &skin);
+                    let hair = avatar
+                        .posed(&pose, 0.0)
                         .into_iter()
                         .find(|mesh| mesh.kind == crate::MeshKind::Hair)
                         .expect("the moustache is drawn")
                         .mesh
-                        .positions
+                        .positions;
+                    (skin.positions, hair)
                 };
-                let (rest, opened) = (posed(&Pose::rest(&avatar.rig)), posed(&open));
-                let moved = rest
-                    .iter()
-                    .zip(&opened)
-                    .map(|(one, two)| one.distance(*two))
-                    .fold(0.0f32, f32::max);
-                assert!(
-                    moved < 0.0001,
-                    "seed {seed:?} flare {flare}: the jaw at 20 degrees moved the moustache {:.2} mm",
-                    moved * 1000.0
-                );
+                let off = |skin: &[Vec3], at: Vec3| {
+                    near.iter()
+                        .flat_map(|&face| {
+                            let corners = &body.faces[face];
+                            (1..corners.len() - 1).map(move |fan| {
+                                [corners[0], corners[fan], corners[fan + 1]]
+                                    .map(|corner| skin[corner as usize])
+                            })
+                        })
+                        .map(|[a, b, c]| {
+                            crate::dress::garment::nearest_on_triangle(at, a, b, c).distance(at)
+                        })
+                        .fold(f32::MAX, f32::min)
+                };
+                let (rest_skin, rest_hair) = pose(0.0);
+                let (open_skin, open_hair) = pose(25.0);
+                // **And no card stretches more than the skin under it does**
+                // (#475's fixer): every edge of every card, its length with
+                // the jaw open against its length shut, set against the same
+                // ratio read on the skin under its two ends (each end's
+                // nearest point on the skin shut, carried by its triangle as
+                // the jaw opens). The skin beside the mouth below its corners
+                // does stretch, three and four times down its length as the
+                // jaw drops away from the skull, and hair lying on it with it;
+                // bound station by station to the one nearest skin VERTEX, two
+                // stations a millimetre apart took two vertices the jaw held
+                // differently, and a card tore across the skin as the mouth
+                // opened.
+                let under = |at: Vec3| {
+                    near.iter()
+                        .flat_map(|&face| {
+                            let corners = &body.faces[face];
+                            (1..corners.len() - 1)
+                                .map(move |fan| [corners[0], corners[fan], corners[fan + 1]])
+                        })
+                        .map(|corners| {
+                            let points = corners.map(|corner| rest_skin[corner as usize]);
+                            let on = crate::dress::garment::nearest_on_triangle(
+                                at, points[0], points[1], points[2],
+                            );
+                            (on.distance_squared(at), corners, on, points)
+                        })
+                        .min_by(|one, two| one.0.total_cmp(&two.0))
+                        .map(|(_, corners, on, points)| {
+                            let shares = crate::hair::clump::barycentric(on, &points);
+                            let carried = corners
+                                .iter()
+                                .zip(shares)
+                                .map(|(corner, share)| open_skin[*corner as usize] * share)
+                                .sum::<Vec3>();
+                            (on, carried)
+                        })
+                        .expect("there is skin round the mouth")
+                };
+                let skin_of: Vec<(Vec3, Vec3)> = rest_hair.iter().map(|at| under(*at)).collect();
+                for face in &faces {
+                    for (at, &one) in face.iter().enumerate() {
+                        let two = face[(at + 1) % face.len()];
+                        let (one, two) = (one as usize, two as usize);
+                        let shut = rest_hair[one].distance(rest_hair[two]);
+                        let skin_shut = skin_of[one].0.distance(skin_of[two].0);
+                        if shut < SHORTEST_EDGE || skin_shut < SHORTEST_EDGE {
+                            continue;
+                        }
+                        let open = open_hair[one].distance(open_hair[two]);
+                        let skin_open = skin_of[one].1.distance(skin_of[two].1);
+                        let hair = open / shut;
+                        let skin = skin_open / skin_shut;
+                        // Grown past what the skin under it grows to, which is
+                        // a tear; a card's width is one binding a station and
+                        // keeps it where the skin round a mouth's corner
+                        // spreads, and that is not one.
+                        let ratio = hair / skin.max(1.0);
+                        stretch = stretch.max(ratio);
+                        assert!(
+                            ratio <= STRETCH,
+                            "{style:?} at width {width}: an edge {:.2} mm long shut is {:.2} mm \
+                             with the jaw open, where the skin under it goes {skin:.2} times",
+                            shut * 1000.0,
+                            open * 1000.0
+                        );
+                    }
+                }
+                for (skin, hair) in [(&rest_skin, &rest_hair), (&open_skin, &open_hair)] {
+                    let seam: Vec<Vec3> = mouth.upper.iter().map(|at| skin[*at as usize]).collect();
+                    let corners = mouth.welds.map(|at| skin[at as usize]);
+                    let reach = (corners[0].x - centre.x)
+                        .abs()
+                        .max((corners[1].x - centre.x).abs());
+                    let level = corners[0].y.max(corners[1].y);
+                    for at in hair.iter() {
+                        let under = seam
+                            .iter()
+                            .filter(|point| (point.x - at.x).abs() < 0.002)
+                            .map(|point| point.y)
+                            .reduce(f32::max);
+                        if let Some(under) = under {
+                            over = over.min(at.y - under);
+                            assert!(
+                                at.y > under,
+                                "{style:?} at width {width}: a vertex hangs {:.2} mm below the \
+                                 mouth's seam at x {:+.1} mm",
+                                (under - at.y) * 1000.0,
+                                (at.x - centre.x) * 1000.0
+                            );
+                        } else if at.y < level {
+                            down += 1;
+                            beside = beside.min((at.x - centre.x).abs() - reach);
+                            assert!(
+                                (at.x - centre.x).abs() > reach,
+                                "{style:?} at width {width}: a vertex below the mouth's corners \
+                                 is in the mouth at x {:+.1} mm",
+                                (at.x - centre.x) * 1000.0
+                            );
+                        }
+                    }
+                }
+                for (rest, open) in rest_hair.iter().zip(&open_hair) {
+                    opened = opened.max(rest.distance(*open));
+                    let moved = (off(&open_skin, *open) - off(&rest_skin, *rest)).abs();
+                    drift = drift.max(moved);
+                    assert!(
+                        moved <= OFF_THE_SKIN,
+                        "{style:?} at width {width}: a vertex moves {:.2} mm off the skin under \
+                         it as the jaw opens",
+                        moved * 1000.0
+                    );
+                }
+                // And that a sculpted moustache keeps width `0`'s outline
+                // above it (#475, the owner's decision): no vertex below the
+                // mouth's corners, posed shut or open, at any width.
+                if matches!(style, MoustacheStyle::Sculpted { .. }) {
+                    assert!(
+                        down == 0,
+                        "{style:?} at width {width}: {down} vertex readings below the mouth's \
+                         corners, the farthest moving {:.1} mm as the jaw opens; a sculpted \
+                         moustache's ends stop at the corners",
+                        opened * 1000.0
+                    );
+                } else if width >= 1.0 {
+                    // And that a horseshoe IS one: its ends are beside the
+                    // mouth, on the skin the jaw carries, and open with it.
+                    println!(
+                        "{style:?} at width {width}: {down} vertex readings beside the mouth, the \
+                         farthest moving {:.1} mm with the jaw",
+                        opened * 1000.0
+                    );
+                    assert!(
+                        down > 40 && opened > ENDS_OPEN,
+                        "{style:?} at width {width}: {down} vertex readings below the mouth's \
+                         corners, the farthest moving {:.1} mm as the jaw opens",
+                        opened * 1000.0
+                    );
+                }
             }
         }
+        println!(
+            "worst {:.2} mm off the skin with the jaw open, closest {:.2} mm over the seam, {:.2} \
+             mm out past a corner, an edge stretched {stretch:.2} times",
+            drift * 1000.0,
+            over * 1000.0,
+            beside * 1000.0
+        );
     }
+
+    /// The most any edge of a moustache's cards may stretch or shrink as the
+    /// jaw opens 25 degrees past what the skin under it does, either way
+    /// round; see
+    /// `a_moustache_lies_on_its_skin_and_out_of_the_mouth_with_the_jaw_open`.
+    const STRETCH: f32 = 1.25;
+
+    /// The shortest edge that stretch is read on, in metres: a card's ends
+    /// meet in edges of nothing, whose ratio is noise.
+    const SHORTEST_EDGE: f32 = 1.0e-5;
+
+    /// How many hair vertices each grown style kept over the middle half of
+    /// the mouth before #475's outline, on the default head and seed 14, at
+    /// `width` `0` and `+1`: (seed, width, chevron, handlebar, pencil). See
+    /// `a_grown_moustache_keeps_its_lip_furnished_at_every_width`.
+    const FURNISHED: [(Option<i64>, f32, [usize; 3]); 4] = [
+        (None, 0.0, [91, 64, 24]),
+        (None, 1.0, [63, 52, 16]),
+        (Some(14), 0.0, [94, 71, 28]),
+        (Some(14), 1.0, [61, 46, 21]),
+    ];
+
+    #[test]
+    fn a_grown_moustache_keeps_its_lip_furnished_at_every_width() {
+        // **The upper lip is what a moustache IS**, and #475's outline gave
+        // the ends that turn down past the corners and run down beside the
+        // mouth their roots out of the lip's: a region's clump count was fixed
+        // whatever its area, so a wide chevron's lip was left with a sixth of
+        // its hair - wisps between two side tufts. So the density is guarded
+        // directly: the vertices a full cut of each style grows over the
+        // middle half of the mouth (between the corners, within half their
+        // reach of the middle, above their height), at rest, against what the
+        // same record grew before the outline ([`FURNISHED`]).
+        //
+        // Measured with the count read as the lip's own density
+        // (`Outline::spread_on`): 138, 113 and 39 at `0` and 132, 111 and 38
+        // at `+1` on the default head (chevron, handlebar, pencil), 139, 110
+        // and 36, and 160, 122 and 49 on seed 14 - at least 1.29 of what each
+        // kept before the outline. With the outline and the count as #475 left
+        // them, seed 14's chevron kept 36 of 94 at `0` and 10 of 61 at `+1`,
+        // its pencil 15 of 28 and 4 of 21; with this outline and the count
+        // fixed, 71 of 94 and 37 of 61, 16 of 28 and 10 of 21. With #475's
+        // second fixer's fuller band under the nose, its count read against
+        // the lip under the foot and its density falling to the ends' by the
+        // neutral nose's wings (`Outline::band`, `Outline::crowd`): 130, 106
+        // and 40 at `0` and 125, 98 and 36 at `+1` on the default head, 150,
+        // 115 and 42, and 199, 154 and 61 on seed 14 - at least 1.43; read
+        // against the fuller band itself, seed 14's chevron kept 92 of 94 at
+        // `0` and its pencil 23 of 28.
+        use crate::anim::Pose;
+        let styles = [
+            MoustacheStyle::Chevron,
+            MoustacheStyle::Handlebar { sweep: 0.6 },
+            MoustacheStyle::Pencil { ride: 0.4 },
+        ];
+        let mut short = Vec::new();
+        for (seed, width, before) in FURNISHED {
+            for (style, before) in styles.into_iter().zip(before) {
+                let mut record = AvatarRecord::new("Talking", Archetype::default());
+                if let Some(seed) = seed {
+                    record.reroll(seed);
+                }
+                let mut hair = crate::hair::HairRecord::bald();
+                hair.regions.moustache.width = width;
+                hair.moustache = crate::hair::Tress {
+                    style,
+                    cut: Cut {
+                        length: 1.0,
+                        droop: 1.0,
+                        density: 1.0,
+                        thickness: 1.0,
+                    },
+                    ..Default::default()
+                };
+                record.hair = hair;
+                record.sanitize();
+                let avatar = Avatar::build_for_shape(&record).expect("a biped builds");
+                let mouth = avatar.parts.mouth.as_ref().expect("an openable mouth");
+                let body = &avatar.parts.body;
+                let corners = mouth.welds.map(|at| body.positions[at as usize]);
+                let centre = (corners[0] + corners[1]) * 0.5;
+                let reach = (corners[0].x - centre.x)
+                    .abs()
+                    .max((corners[1].x - centre.x).abs());
+                let level = corners[0].y.max(corners[1].y);
+                let hair = avatar
+                    .posed(&Pose::rest(&avatar.rig), 0.0)
+                    .into_iter()
+                    .find(|mesh| mesh.kind == crate::MeshKind::Hair)
+                    .expect("the moustache is drawn")
+                    .mesh
+                    .positions;
+                let middle = hair
+                    .iter()
+                    .filter(|at| (at.x - centre.x).abs() < reach * 0.5 && at.y > level)
+                    .count();
+                println!(
+                    "seed {seed:?} width {width:+}: {style:?} {middle} over the middle of the \
+                     mouth, {before} before the outline, {} in all",
+                    hair.len()
+                );
+                if middle < before {
+                    short.push(format!(
+                        "seed {seed:?} width {width:+} {style:?}: {middle} of {before}"
+                    ));
+                }
+            }
+        }
+        assert!(
+            short.is_empty(),
+            "a grown moustache keeps less hair over the middle of the mouth than it did before \
+             the outline: {short:?}"
+        );
+    }
+
+    /// How far a horseshoe's ends must move as the jaw opens 25 degrees, in
+    /// metres; see
+    /// `a_moustache_lies_on_its_skin_and_out_of_the_mouth_with_the_jaw_open`.
+    const ENDS_OPEN: f32 = 0.010;
+
+    /// How far a moustache's vertex may move off or into the skin under it as
+    /// the jaw opens 25 degrees, in metres; see
+    /// `a_moustache_lies_on_its_skin_and_out_of_the_mouth_with_the_jaw_open`.
+    const OFF_THE_SKIN: f32 = 0.0015;
 
     /// The moustache one record grows on one built head, head-local.
     ///

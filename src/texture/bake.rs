@@ -7,6 +7,11 @@
 //! which is what makes procedural skin tractable — freckles on a cheek become
 //! plain arithmetic on a position rather than a search through geometry.
 //!
+//! A triangle fills the texels it covers and the ones just outside it, so a
+//! thin triangle still lands on every row it crosses; each texel says where
+//! the nearest point of the nearest triangle is on the body (#472), whatever
+//! order the triangles are drawn in.
+//!
 //! Beside the buffer, for the crate's own painter, the bake measures how much
 //! skin each texel spans, along each of the atlas's axes: the footprint a
 //! painted beard's edge is feathered over (#432); and it marks which of the
@@ -336,14 +341,63 @@ pub(crate) fn bake_measured(
     if size == 0 || (uv.faces.is_empty() && parts.is_empty()) {
         return (AtlasGeometry::default(), Footprints::default());
     }
+    let (mut geometry, mut measured) = draw(mesh, uv, parts, mouth, size);
+    dilate(&mut geometry, &mut measured, DILATION);
+    (geometry, measured)
+}
 
+/// [`bake_measured`] before its gutters are dilated: every texel a triangle
+/// covers or touches, and nothing else.
+fn draw(
+    mesh: &PolyMesh,
+    uv: &UvUnwrap,
+    parts: &[(&PolyMesh, Zone, &[f32])],
+    mouth: &[f32],
+    size: u32,
+) -> (AtlasGeometry, Footprints) {
     let mut geometry = AtlasGeometry {
         width: size,
         height: size,
         texels: vec![None; (size * size) as usize],
     };
     let mut measured = Footprints::over(size, size);
+    // How far outside the triangle that filled it each texel lies (#472): see
+    // `rasterize`. One byte a texel, 1 MB at 1024 texels, dropped before the
+    // gutters are dilated, which clone every texel at 36 bytes each.
+    let mut ranks = vec![u8::MAX; (size * size) as usize];
+    triangles(mesh, uv, parts, mouth, size, |drawn, corners| {
+        rasterize(
+            &mut geometry,
+            &mut measured,
+            &mut ranks,
+            drawn.zone,
+            drawn.part,
+            corners,
+        );
+    });
+    (geometry, measured)
+}
 
+/// Where a triangle [`triangles`] hands out came from.
+#[derive(Clone, Copy, Debug)]
+struct Drawn {
+    /// The zone its texels take.
+    zone: Zone,
+    /// Whether an attached part drew it, rather than the body's own skin.
+    part: bool,
+}
+
+/// Hands every triangle of the body's charts, and then of each attached part,
+/// to `visit`, in the order the bake draws them, fanned from each face's first
+/// corner and carrying everything [`rasterize`] reads at its corners.
+fn triangles(
+    mesh: &PolyMesh,
+    uv: &UvUnwrap,
+    parts: &[(&PolyMesh, Zone, &[f32])],
+    mouth: &[f32],
+    size: u32,
+    mut visit: impl FnMut(Drawn, &Corners),
+) {
     if !uv.faces.is_empty() {
         let normals = uv.gather(&mesh.vertex_normals());
         let positions = uv.gather(&mesh.positions);
@@ -366,16 +420,16 @@ pub(crate) fn bake_measured(
             size,
         ));
         for (index, face) in uv.faces.iter().enumerate() {
-            let zone = uv.charts[uv.chart_of_face[index] as usize].zone;
+            let drawn = Drawn {
+                zone: uv.charts[uv.chart_of_face[index] as usize].zone,
+                part: false,
+            };
             // Fan-triangulate: a quad from a subdivided body is planar enough
             // that which diagonal is chosen makes no visible difference.
             for corner in 1..face.len().saturating_sub(1) {
                 let triangle = [face[0], face[corner], face[corner + 1]];
-                rasterize(
-                    &mut geometry,
-                    &mut measured,
-                    zone,
-                    false,
+                visit(
+                    drawn,
                     &Corners {
                         uvs: triangle.map(|v| uv.uvs[v as usize]),
                         positions: triangle.map(|v| positions[v as usize]),
@@ -390,22 +444,14 @@ pub(crate) fn bake_measured(
     }
 
     for &(part, zone, mouth) in parts {
-        draw_part(&mut geometry, &mut measured, part, zone, mouth);
+        let drawn = Drawn { zone, part: true };
+        part_triangles(part, mouth, size, |corners| visit(drawn, corners));
     }
-
-    dilate(&mut geometry, &mut measured, DILATION);
-    (geometry, measured)
 }
 
-/// Rasterises one attached part, using the coordinates it carries and its
-/// mouth channel, if it has one.
-fn draw_part(
-    geometry: &mut AtlasGeometry,
-    measured: &mut Footprints,
-    part: &PolyMesh,
-    zone: Zone,
-    mouth: &[f32],
-) {
+/// Hands every triangle of one attached part to `visit`, using the
+/// coordinates it carries and its mouth channel, if it has one.
+fn part_triangles(part: &PolyMesh, mouth: &[f32], size: u32, mut visit: impl FnMut(&Corners)) {
     if part.uvs.len() != part.positions.len() {
         return;
     }
@@ -424,25 +470,19 @@ fn draw_part(
         &part.faces,
         |vertex| vertex as usize,
         part.positions.len(),
-        geometry.width,
+        size,
     );
     for face in &part.faces {
         for corner in 1..face.len().saturating_sub(1) {
             let triangle = [face[0], face[corner], face[corner + 1]];
-            rasterize(
-                geometry,
-                measured,
-                zone,
-                true,
-                &Corners {
-                    uvs: triangle.map(|v| part.uvs[v as usize]),
-                    positions: triangle.map(|v| part.positions[v as usize]),
-                    normals: triangle.map(|v| normals[v as usize]),
-                    creases: triangle.map(|v| creases[v as usize]),
-                    mouths: triangle.map(mouths),
-                    spreads: triangle.map(|v| spreads[v as usize]),
-                },
-            );
+            visit(&Corners {
+                uvs: triangle.map(|v| part.uvs[v as usize]),
+                positions: triangle.map(|v| part.positions[v as usize]),
+                normals: triangle.map(|v| normals[v as usize]),
+                creases: triangle.map(|v| creases[v as usize]),
+                mouths: triangle.map(mouths),
+                spreads: triangle.map(|v| spreads[v as usize]),
+            });
         }
     }
 }
@@ -551,7 +591,7 @@ fn outer(v: Vec3) -> Mat3 {
 const COARSEST: f32 = 0.008;
 
 /// How far outside a triangle, in texels, a texel centre may sit and still be
-/// filled by it.
+/// filled by it: measured to the nearest point of the triangle itself.
 ///
 /// **Conservative on purpose** (#309). A triangle owns every texel it
 /// touches, not only those whose centres it contains: a chart with a
@@ -565,7 +605,22 @@ const COARSEST: f32 = 0.008;
 /// double-written by the hairline tolerance this replaces, and the overdraw
 /// into a neighbour's texels is the same width the gutter dilation grows
 /// anyway.
+///
+/// **To the triangle, not to its edges' lines** (#472). Until then a texel
+/// was in reach when it lay within the margin of all three lines its edges
+/// lie on, which beyond a needle's sharp corner reaches many texels past the
+/// corner itself - 360 to 780 texels a body were filled by a triangle
+/// nothing of which lay within a texel of them. A texel any triangle crosses still
+/// has its centre within half a diagonal of it, so #309's slivers land as
+/// they did.
 const COVER: f32 = 0.71;
+
+/// How finely [`rasterize`] ranks how far outside its triangle a texel it
+/// fills lies, in steps over [`COVER`]: a rank a texel, `0` inside a
+/// triangle and `1` to `255` out to [`COVER`], so one byte holds it. Two
+/// triangles a texel lies within one step (about three thousandths of a
+/// texel) of are as near as each other, and the later drawn wins.
+const RANK_STEPS: f32 = 254.0;
 
 /// One triangle's corners, everything the rasteriser carries across it.
 struct Corners {
@@ -580,9 +635,28 @@ struct Corners {
 
 /// Fills every texel a triangle covers or touches - see [`COVER`] - and the
 /// [`Footprint`] beside each, and whether an attached `part` drew it.
+///
+/// **A texel outside the triangle takes the triangle's nearest point** (#472):
+/// what the body is at the point of the edge or the corner nearest its
+/// centre. It used to take the weights of its centre clamped at zero and
+/// renormalised, which is a point on the near edge seen from the far corner:
+/// beside a needle - a triangle a fraction of a texel thick, whose far corner
+/// lies almost on that edge - it is that corner's point whichever end of the
+/// needle the texel lies at, and a needle can be a quarter of a metre long on
+/// the body.
+///
+/// **And only where no nearer triangle has filled it**: `ranks` holds, a
+/// texel, how far outside the triangle that filled it the texel lies - see
+/// [`RANK_STEPS`] - and a triangle fills a texel only as near or nearer. So a
+/// texel inside one triangle is never painted over by another that only
+/// reaches it with its rim, and of two rims the nearer paints it, whichever
+/// was drawn first; before, the last drawn did, and where two charts or two
+/// folds of one chart lie within a texel of each other in the atlas it could
+/// be skin from anywhere else on the body.
 fn rasterize(
     geometry: &mut AtlasGeometry,
     measured: &mut Footprints,
+    ranks: &mut [u8],
     zone: Zone,
     part: bool,
     corners: &Corners,
@@ -631,17 +705,31 @@ fn rasterize(
                 raw.y * inward / lengths[1],
                 raw.z * inward / lengths[2],
             );
+            // Further than the margin outside any edge's line is further
+            // from the triangle, so out of reach whatever it is nearest.
             if distances.min_element() < -COVER {
                 continue;
             }
-            let mut weights = (raw / area).max(Vec3::ZERO);
-            let total = weights.element_sum();
-            if total <= 0.0 {
+            let at = (y * geometry.width + x) as usize;
+            let (rank, weights) = if distances.min_element() >= 0.0 {
+                let weights = (raw / area).max(Vec3::ZERO);
+                let total = weights.element_sum();
+                if total <= 0.0 {
+                    continue;
+                }
+                (0, weights / total)
+            } else {
+                let (distance, weights) = nearest_on_edges(&pixels, point);
+                if distance > COVER {
+                    continue;
+                }
+                (1 + (distance / COVER * RANK_STEPS) as u8, weights)
+            };
+            if geometry.texels[at].is_some() && rank > ranks[at] {
                 continue;
             }
-            weights /= total;
+            ranks[at] = rank;
 
-            let at = (y * geometry.width + x) as usize;
             let normal = (normals[0] * weights.x + normals[1] * weights.y + normals[2] * weights.z)
                 .normalize_or(Vec3::Y);
             geometry.texels[at] = Some(Texel {
@@ -665,6 +753,30 @@ fn rasterize(
             }
         }
     }
+}
+
+/// The point of the triangle `pixels`' edges nearest `point`, all in texels:
+/// how far it lies from `point`, and its barycentric weights - which, for a
+/// `point` outside the triangle, is its nearest point of the triangle.
+///
+/// Each edge's own projection, from its own corner, so a needle's long edges
+/// are read as well as any other's: no product of two of its edge functions,
+/// which beside a needle cancel to its rounding.
+fn nearest_on_edges(pixels: &[Vec2; 3], point: Vec2) -> (f32, Vec3) {
+    let mut best = (f32::INFINITY, Vec3::ZERO);
+    for (from, to) in [(0, 1), (1, 2), (2, 0)] {
+        let along = pixels[to] - pixels[from];
+        let off = point - pixels[from];
+        let t = (off.dot(along) / along.length_squared().max(f32::MIN_POSITIVE)).clamp(0.0, 1.0);
+        let distance = (off - along * t).length();
+        if distance < best.0 {
+            let mut weights = Vec3::ZERO;
+            weights[from] = 1.0 - t;
+            weights[to] = t;
+            best = (distance, weights);
+        }
+    }
+    best
 }
 
 /// Twice the signed area of the triangle `a, b, c`.
@@ -717,6 +829,10 @@ fn dilate(geometry: &mut AtlasGeometry, measured: &mut Footprints, passes: u32) 
         }
     }
 }
+
+#[cfg(test)]
+#[path = "stray_tests.rs"]
+mod stray_tests;
 
 #[cfg(test)]
 mod tests {
@@ -805,6 +921,7 @@ mod tests {
                 rasterize(
                     &mut bare,
                     &mut measured,
+                    &mut vec![u8::MAX; 128 * 128],
                     zone,
                     false,
                     &Corners {
@@ -842,7 +959,12 @@ mod tests {
         // footprint as wide as the ellipse's long axis reads 0.900 and 0.764
         // there, the fine way's steps a fraction of one. On #469's chart 0.977
         // and 0.917 over 9,100 readings; 0.976 and 0.928 to 0.933 under a
-        // nudge of libm.
+        // nudge of libm. On #473's face chart 0.958 and 0.980 over 3,004;
+        // 0.957 to 0.960 and 0.973 to 0.989 under a nudge. On its fixer's charts
+        // of the face, the crown and the band round the back, 0.991, and where
+        // the atlas is coarse one way - read on the head squeezed to half its
+        // width, below - 0.996 over 48,746; 0.991 and 0.996 under a nudge. On
+        // its second fixer's charts 0.989, 0.988 to 0.989 under a nudge.
         let skeleton = HumanoidParams::default().skeleton(&crate::Composites::default());
         let cage = build_cage(&skeleton, &CageConfig::default()).expect("meshes");
         let mesh = catmull_clark(&cage, crate::BODY_SUBDIVISIONS);
@@ -854,10 +976,19 @@ mod tests {
         // Kept for the head only: measured at #432 on the default head, 410 of
         // the atlas's 4096 tiles, 2.5 MB of footprints where one a texel was 24;
         // 396 on #469's chart, with which texels are a part's (#471) at 32
-        // bytes a tile beside them.
+        // bytes a tile beside them; 438 on #473's two charts of the head, with
+        // #474's denser packing, and 446 to 474 under a nudge of libm; 452 on
+        // its fixer's three, the face, the crown and the band round the back,
+        // and 460 to 484 under a nudge.
+        //
+        // **The ceiling is the owner's: 576 tiles, nine sixty-fourths of the
+        // atlas** (2026-11-14, raised from an eighth, 512): about 0.4 MB more
+        // a person's build may keep in the web worker, spent so that no region
+        // of a person's head is charted coarser than 0.24.5's (`uv::PERSON_HEAD_SHARE`).
+        // 526 on #473's second fixer's charts, and 517 to 543 under a nudge.
         let kept = measured.tiles.iter().flatten().count();
         assert!(
-            kept * 8 <= measured.tiles.len(),
+            kept * 64 <= measured.tiles.len() * 9,
             "the footprints keep {kept} of {} tiles",
             measured.tiles.len()
         );
@@ -876,68 +1007,125 @@ mod tests {
             )
             .length()
         };
-        let (mut steps, mut long) = (Vec::new(), Vec::new());
-        for (at, texel) in geometry.texels.iter().enumerate() {
-            let Some(here) = texel else { continue };
-            let [major, minor] = measured[at].axes;
-            if here.zone != Zone::Head {
-                assert_eq!(
-                    measured[at],
-                    Footprint::default(),
-                    "a footprint off the head at {:?}",
+        // Every reading of the step to the next texel on the head, and those
+        // where the atlas is twice as coarse one way as the other, the coarse
+        // way's and the fine way's apart.
+        let read = |geometry: &AtlasGeometry, measured: &Footprints| {
+            let width = geometry.width as usize;
+            let (mut steps, mut long) = (Vec::new(), (Vec::new(), Vec::new()));
+            for (at, texel) in geometry.texels.iter().enumerate() {
+                let Some(here) = texel else { continue };
+                let [major, minor] = measured[at].axes;
+                if here.zone != Zone::Head {
+                    assert_eq!(
+                        measured[at],
+                        Footprint::default(),
+                        "a footprint off the head at {:?}",
+                        here.position
+                    );
+                    continue;
+                }
+                assert!(
+                    major.is_finite()
+                        && minor.is_finite()
+                        && major.length() >= minor.length() * (1.0 - 1e-5)
+                        && major.dot(minor).abs() <= 1e-3 * major.length_squared()
+                        && major.dot(here.normal).abs() <= 1e-3 * major.length(),
+                    "a footprint of {major:?} and {minor:?} at {:?}",
                     here.position
                 );
-                continue;
+                // Where a face is held to the coarsest it reads, the step past it
+                // is longer than the footprint by design.
+                if minor.length() < 1e-5 || major.length() > 0.9 * COARSEST {
+                    continue;
+                }
+                let along = [(at % width + 1 < width).then_some(at + 1), Some(at + width)];
+                let both = along.map(|next| {
+                    let there = geometry.texels.get(next?).copied().flatten()?;
+                    let step = there.position - here.position;
+                    (here.zone == there.zone
+                        && here.normal.dot(there.normal) >= 0.9
+                        && step.length() >= 1e-6)
+                        .then(|| (step.length(), reading(&measured[at], step)))
+                        .filter(|&(_, read)| read < 3.0)
+                });
+                for &(_, read) in both.iter().flatten() {
+                    steps.push(read);
+                }
+                // Where the atlas itself is twice as coarse one way as the other.
+                if let [Some((one, first)), Some((two, second))] = both
+                    && one.max(two) >= 2.0 * one.min(two)
+                {
+                    let (coarse, fine) = if one > two {
+                        (first, second)
+                    } else {
+                        (second, first)
+                    };
+                    long.0.push(coarse);
+                    long.1.push(fine);
+                }
             }
-            assert!(
-                major.is_finite()
-                    && minor.is_finite()
-                    && major.length() >= minor.length() * (1.0 - 1e-5)
-                    && major.dot(minor).abs() <= 1e-3 * major.length_squared()
-                    && major.dot(here.normal).abs() <= 1e-3 * major.length(),
-                "a footprint of {major:?} and {minor:?} at {:?}",
-                here.position
-            );
-            // Where a face is held to the coarsest it reads, the step past it
-            // is longer than the footprint by design.
-            if minor.length() < 1e-5 || major.length() > 0.9 * COARSEST {
-                continue;
-            }
-            let along = [(at % width + 1 < width).then_some(at + 1), Some(at + width)];
-            let both = along.map(|next| {
-                let there = geometry.texels.get(next?).copied().flatten()?;
-                let step = there.position - here.position;
-                (here.zone == there.zone
-                    && here.normal.dot(there.normal) >= 0.9
-                    && step.length() >= 1e-6)
-                    .then(|| (step.length(), reading(&measured[at], step)))
-                    .filter(|&(_, read)| read < 3.0)
-            });
-            for &(_, read) in both.iter().flatten() {
-                steps.push(read);
-            }
-            // Where the atlas itself is twice as coarse one way as the other.
-            if let [Some((one, first)), Some((two, second))] = both
-                && one.max(two) >= 2.0 * one.min(two)
-            {
-                long.extend([first, second]);
+            (steps, long)
+        };
+        let (mut steps, _) = read(&geometry, &measured);
+        // Where the atlas is coarse one way, read on the same head with every
+        // chart of it squeezed to half its width: #473's charts of the head are
+        // laid flat, as fine each way as the other, and texels twice as coarse
+        // one way as the other are left only in the rims of its charts, which
+        // take the nearest point of the chart's edge and stand closer than a
+        // texel across it (1,000 such readings of 0.52 of a footprint, and 4
+        // inside the charts, where 0.24.5's wrap had thousands).
+        //
+        // Read the coarse way and the fine way apart there (#473's second
+        // fixer): pooled, a footprint turned 45 degrees on the skin read 0.895
+        // at the median, inside the bounds, its coarse way's readings long and
+        // its fine way's short. Apart, the footprint reads 1.022 the coarse way
+        // and 0.976 the fine way, the same under every nudge of libm to a
+        // thousandth or two; one turned 45 degrees 1.584 and 0.773, one turned
+        // a right angle 1.993 and 0.502, and a round one as wide as the long
+        // axis 1.021 and 0.501.
+        let mut squeezed = uv.clone();
+        let mut chart_of_vertex = vec![usize::MAX; squeezed.uvs.len()];
+        for (face, corners) in squeezed.faces.iter().enumerate() {
+            for &corner in corners {
+                chart_of_vertex[corner as usize] = squeezed.chart_of_face[face] as usize;
             }
         }
+        for (at, chart) in squeezed.uvs.iter_mut().zip(&chart_of_vertex) {
+            if let Some(chart) = uv
+                .charts
+                .get(*chart)
+                .filter(|chart| chart.zone == Zone::Head)
+            {
+                at.x = chart.rect.min.x + (at.x - chart.rect.min.x) * 0.5;
+            }
+        }
+        let (squeezed_geometry, squeezed_measured) =
+            bake_measured(&mesh, &squeezed, &[], &[], size);
+        let (_, (mut coarse, mut fine)) = read(&squeezed_geometry, &squeezed_measured);
         let median = |all: &mut Vec<f32>| {
             all.sort_by(f32::total_cmp);
             all[all.len() / 2]
         };
-        assert!(long.len() > 1000, "only {} stretched readings", long.len());
-        let (everywhere, stretched) = (median(&mut steps), median(&mut long));
+        assert!(
+            coarse.len() > 1000,
+            "only {} stretched readings",
+            coarse.len()
+        );
+        let everywhere = median(&mut steps);
+        let (coarse, fine) = (median(&mut coarse), median(&mut fine));
         println!(
             "the step to the next texel reads {everywhere:.3} of the footprint at the median, \
-             {stretched:.3} over {} readings where it is twice as coarse one way as the other",
-            long.len()
+             {coarse:.3} the coarse way and {fine:.3} the fine way where it is twice as coarse \
+             one way as the other"
         );
         assert!(
-            (0.85..=1.18).contains(&everywhere) && (0.85..=1.18).contains(&stretched),
+            [everywhere, coarse, fine]
+                .iter()
+                .all(|read| (0.85..=1.18).contains(read)),
             "the step to the next texel is {everywhere:.2} of a footprint at the median, \
-             {stretched:.2} where the atlas is coarse one way"
+             {coarse:.2} the coarse way and {fine:.2} the fine way where the atlas is coarse one \
+             way"
         );
 
         // The two sides of a seam on the head: texels at one place on the

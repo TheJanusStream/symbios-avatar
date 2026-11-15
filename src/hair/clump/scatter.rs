@@ -121,9 +121,20 @@ pub fn scatter(
         // face on the vault straddles a hairline, and a centroid reads that
         // face as wholly in or wholly out — which puts a straight edge through
         // the one boundary the whole region exists to make soft.
+        //
+        // **How densely it is sown, not only how much may grow** (#475's
+        // fixer): a moustache's ends are sown thinner than its lip, which a
+        // face's claim carries; the draw inside a face below still follows
+        // the mask alone, the crowd being even across one face.
         let weight = corners
             .iter()
-            .map(|corner| follicles.weight(follicle, mesh.positions[*corner as usize] - origin))
+            .map(|corner| {
+                follicles.sown_on(
+                    follicle,
+                    mesh.positions[*corner as usize] - origin,
+                    normals[*corner as usize],
+                )
+            })
             .sum::<f32>()
             / corners.len() as f32;
         if weight <= f32::EPSILON {
@@ -157,13 +168,13 @@ pub fn scatter(
         // well as between faces, which is what makes a soft edge thin out
         // smoothly rather than in steps of one face.
         let mut seat = inside(mesh, &normals, weights, face, stream);
-        let mut weight = follicles.weight(follicle, seat.0 - origin);
+        let mut weight = follicles.weight_on(follicle, seat.0 - origin, seat.1);
         for _ in 0..RETRIES {
             if weight > stream.random_range(0.0..1.0) {
                 break;
             }
             seat = inside(mesh, &normals, weights, face, stream);
-            weight = follicles.weight(follicle, seat.0 - origin);
+            weight = follicles.weight_on(follicle, seat.0 - origin, seat.1);
         }
         if weight <= f32::EPSILON {
             continue;
@@ -264,7 +275,13 @@ pub fn meridians(
         }
         let weight = corners
             .iter()
-            .map(|corner| follicles.weight(follicle, mesh.positions[*corner as usize] - origin))
+            .map(|corner| {
+                follicles.weight_on(
+                    follicle,
+                    mesh.positions[*corner as usize] - origin,
+                    normals[*corner as usize],
+                )
+            })
             .sum::<f32>()
             / corners.len() as f32;
         if weight <= f32::EPSILON {
@@ -328,7 +345,7 @@ pub fn meridians(
             let apart = (local.x.atan2(local.z) - azimuth + std::f32::consts::PI)
                 .rem_euclid(std::f32::consts::TAU)
                 - std::f32::consts::PI;
-            let here = follicles.weight(follicle, local);
+            let here = follicles.weight_on(follicle, local, drawn.1);
             // Every draw is kept as the fallback; the last attempt takes
             // whatever it drew rather than dropping the sector.
             let last = attempt + 1 == RETRIES * SECTOR_TRIES;
