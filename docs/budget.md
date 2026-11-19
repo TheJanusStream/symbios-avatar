@@ -10,7 +10,7 @@ budget figures have a history of being true on the day and wrong within a week.
 | constant | value | where |
 | --- | --- | --- |
 | `TRIANGLE_TARGET` | 33,500 | `tests/budget.rs` - the number the engine is judged by (WebGL2 tier) |
-| `TRIANGLE_CEILING` | 32,200 | `tests/budget.rs` - the ratchet: today's high-water mark (32,012, 32,056 under the libm nudge), not a goal |
+| `TRIANGLE_CEILING` | 32,600 | `tests/budget.rs` - the ratchet: today's high-water mark (32,452 at generation 12, #486; 32,012 before it, 32,056 under the libm nudge), not a goal |
 | `MESH_TARGET` / `MESH_CEILING` | 4 draws | `tests/budget.rs` - skin, hair, cloth, eye; each justified by a material the others cannot provide |
 | `hair::clump::MAX_TRIANGLES` | 3,300 | `src/hair/clump/mod.rs` - what is left for hair once everything else is paid for, measured at the *dearest* body, not the default, and re-measured by a test rather than quoted; it also has a *floor*, the dearest head a re-roll can grow, which the tier must never trim |
 
@@ -20,7 +20,9 @@ lands, re-run:
 - default body: **28,380**
 - dearest sweep corner (built, rolled hair): **32,012** (seed 2 long broad,
   lean thin tall at frame 0); the six seeds alone reach 29,988 (seed 1 long
-  broad)
+  broad). At generation 12 (#486) the same corner reads **32,452**: seed 2
+  re-rolled masculine, and its own hair is now a TiedBack scalp and a full
+  Chevron + Full + FullConnect beard (it was a Curly scalp and no beard)
 - dearest bald body: **30,142** (the same body) - leaving **3,358** under the
   target, which is what the hair ceiling is the leftover of
 - greedy-hair body: **30,250**
@@ -28,7 +30,11 @@ lands, re-run:
   **33,440** (the same body), 60 under the target
 - dearest legal hair, untiered: the test prints seed 42 long broad's, **3,390**
 - the hair ceiling's floor: a helmet on a rolled face, **3,276** (seed 102 as
-  rolled, a bun, #351)
+  rolled, a bun, #351); at generation 12 (#486), over 300 rolled seeds with
+  every catalogue style on each seed's own face, **3,276** again (seed 114, a
+  bun), where generation 11's tree reads 3,250 (seed 102). No rolled head of
+  either generation is thinned, and the dearest own rolled hair fell from
+  3,126 to 2,792 (mean 1,438 to 1,452)
 - the far hair tier (`AvatarConfig::far_hair`, #350): at most **660** on a
   rolled face; never more than the near tier it stands for, and not counted
   against `MAX_TRIANGLES`

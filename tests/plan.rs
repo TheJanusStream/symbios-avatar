@@ -1305,6 +1305,13 @@ fn fingerprinted_bodies() -> Vec<(String, Skeleton)> {
 /// moves the girths of every seed aged past `AGE_PIVOT` whose body fat came
 /// out different; the humanoid default, the frame, age and corner rows, the
 /// golden table of `record` and both golden renders hold.
+///
+/// **The eight humanoid seed rows re-pinned for generation 12** (#486,
+/// Overlands #1953): a person's roll draws its frame as two bells on the
+/// references and its stature at the measured means, so every seed is a
+/// different person. Judged on `render --seed N` front sheets of seeds 0-15
+/// before and after. Every other row held: the defaults, the frame, age and
+/// corner rows (set, not rolled), and every quadruped row.
 const FINGERPRINTS: [(&str, u64); 28] = [
     ("humanoid default", 0x9173c75bf766fde2),
     ("quadruped default", 0xa5a2688192fb3fde),
@@ -1318,21 +1325,21 @@ const FINGERPRINTS: [(&str, u64); 28] = [
     ("humanoid corner h=2.2 all=0", 0x0fd581eb22c0ff94),
     ("humanoid corner h=1.2 all=1", 0x2b700d85d0f6fd72),
     ("humanoid corner h=2.2 all=1", 0x5f2db1dd49571664),
-    ("humanoid seed 0", 0x387f442843f970ab),
+    ("humanoid seed 0", 0x3732238804432a33),
     ("quadruped seed 0", 0x6c51f1a1790c3b6e),
-    ("humanoid seed 1", 0x2d9b6b9e530ad858),
+    ("humanoid seed 1", 0x75bb1a8e20b4c5d3),
     ("quadruped seed 1", 0x6fed81869a0384ba),
-    ("humanoid seed 2", 0x02347f5f268e17be),
+    ("humanoid seed 2", 0x2166f5ef823655bb),
     ("quadruped seed 2", 0xe5b1607b0b6ddc6f),
-    ("humanoid seed 3", 0x568d9be1418e9cad),
+    ("humanoid seed 3", 0xc6c196fa9d504a8c),
     ("quadruped seed 3", 0x0933948dfc07bd04),
-    ("humanoid seed 4", 0x549491a10f50bdde),
+    ("humanoid seed 4", 0x59ea3ee634876f1f),
     ("quadruped seed 4", 0xeafd9d43ea2f28ff),
-    ("humanoid seed 5", 0x9989c9294b7074b9),
+    ("humanoid seed 5", 0x67d952214d303f85),
     ("quadruped seed 5", 0x30fed88f09248dc2),
-    ("humanoid seed 6", 0x55df5943e6969883),
+    ("humanoid seed 6", 0xdc8205fe405b9c7e),
     ("quadruped seed 6", 0x430ab38008d0d025),
-    ("humanoid seed 7", 0xf654635d1602bfd6),
+    ("humanoid seed 7", 0x3c7db13306e58db3),
     ("quadruped seed 7", 0xf0878d211abdca21),
 ];
 

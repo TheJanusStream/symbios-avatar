@@ -386,22 +386,71 @@ impl Rolls {
         if stream.random_bool(WILDCARD) {
             return stream.random_range(range.0..=range.1);
         }
-        // Box–Muller from two uniforms: exact, allocation-free, and stable —
-        // this pair of draws is the wire contract for every stored seed.
-        let (a, b): (f32, f32) = (
-            stream.random_range(f32::EPSILON..=1.0),
-            stream.random_range(0.0..1.0),
-        );
-        let normal = (-2.0 * a.ln()).sqrt() * (std::f32::consts::TAU * b).cos();
-        let mut value = default + sigma * normal;
-        if value < range.0 {
-            value = range.0 + (range.0 - value);
-        }
-        if value > range.1 {
-            value = range.1 - (value - range.1);
-        }
-        value.clamp(range.0, range.1)
+        bell(&mut stream, default, sigma, range)
     }
+
+    /// An axis whose population has two peaks, drawn as [`Self::shape`] draws
+    /// one: the same wildcard first, then a fair coin for which peak, then the
+    /// same Gaussian on it.
+    ///
+    /// **Because one bell cannot describe a population made of two.** The frame
+    /// axis is the case (#486, Overlands #1953, owner call): its two references
+    /// are the measured male and female bodies at `-1` and `+1`, and a single
+    /// bell centred between them made the androgynous middle the commonest body
+    /// a re-roll drew - the one body the references say is rarest. Two equal
+    /// bells, one on each reference, put the bulk where people are and leave the
+    /// middle reachable rather than typical; the wildcard keeps every point of
+    /// the envelope a roll away, as it does for every shape axis.
+    ///
+    /// **The draw order is the contract**, as `shape`'s is: the wildcard coin,
+    /// the mode coin, then the Box-Muller pair, all from the axis's own named
+    /// stream, so axis independence holds and the same seed draws the same
+    /// value on every build. The Gaussian is `shape`'s own, shared rather than
+    /// copied, so every `shape` axis draws what it always drew to the bit.
+    ///
+    /// `modes.0` is taken when the coin comes up false, `modes.1` when it comes
+    /// up true. Reflected at the bounds and clamped, as `shape` is.
+    ///
+    /// Provenance: **owner call** for the shape of the population (#1953),
+    /// written to keep `shape`'s stream contract.
+    #[must_use]
+    pub fn bimodal(&self, axis: &str, modes: (f32, f32), sigma: f32, range: (f32, f32)) -> f32 {
+        use rand::Rng;
+        let mut stream = self.stream(axis);
+        if stream.random_bool(WILDCARD) {
+            return stream.random_range(range.0..=range.1);
+        }
+        let centre = if stream.random_bool(0.5) {
+            modes.1
+        } else {
+            modes.0
+        };
+        bell(&mut stream, centre, sigma, range)
+    }
+}
+
+/// The Gaussian [`Rolls::shape`] and [`Rolls::bimodal`] draw their bulk from:
+/// `centre + sigma * N(0, 1)` off the stream's next two uniforms, reflected at
+/// the bounds and clamped into them.
+///
+/// Box-Muller from two uniforms: exact, allocation-free, and stable - this pair
+/// of draws is the wire contract for every stored seed, so it lives in one
+/// place for both callers.
+fn bell(stream: &mut Pcg64Mcg, centre: f32, sigma: f32, range: (f32, f32)) -> f32 {
+    use rand::Rng;
+    let (a, b): (f32, f32) = (
+        stream.random_range(f32::EPSILON..=1.0),
+        stream.random_range(0.0..1.0),
+    );
+    let normal = (-2.0 * a.ln()).sqrt() * (std::f32::consts::TAU * b).cos();
+    let mut value = centre + sigma * normal;
+    if value < range.0 {
+        value = range.0 + (range.0 - value);
+    }
+    if value > range.1 {
+        value = range.1 - (value - range.1);
+    }
+    value.clamp(range.0, range.1)
 }
 
 /// How often [`Rolls::shape`] ignores the Gaussian and draws anywhere.
@@ -1246,6 +1295,102 @@ fn take_byte(bytes: &mut &[u8]) -> Result<u8, PlanDecodeError> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn a_shape_draw_is_what_it_always_was() {
+        // `shape`'s draw order - the wildcard coin, then the Box-Muller pair - is
+        // the wire contract for every stored seed of every plan, beasts and
+        // winged bodies included (#486). `bimodal` shares its Gaussian, and this
+        // pins that factoring it out moved no draw: the values were read off the
+        // tree before the factoring. Seeds and axes chosen so both arms are
+        // crossed: seed 16 on `composites.mass` lands its wildcard.
+        //
+        // **Within a relative 1e-5, not to the bit, for the Gaussian arm**:
+        // Box-Muller reads `ln` and `cos`, and a pinned bit pattern is one
+        // glibc's. Under the gate's libm nudge the four Gaussian draws move up
+        // to 12 last places (a relative 1.4e-6, `scripts/gate.sh --libm`), and
+        // CI's libm is not this machine's. A changed draw order or a moved
+        // stream gives a wholly different value, so a relative 1e-5 still
+        // catches what this test is for. The wildcard draw is a uniform
+        // `random_range` that reads no libm, and is held to the bit.
+        let pinned = [
+            (42, "composites.mass", 0.0, 1.0, (-3.0, 3.0), 3_197_666_373),
+            (7, "humanoid.height", 1.75, 0.12, (0.1, 3.1), 1_072_911_421),
+            (-3, "face.nose", 0.5, 0.375, (-1.0, 2.0), 3_195_739_968),
+            (1, "quadruped.appeal", 0.6, 0.3, (0.0, 1.0), 1_057_155_154),
+            (16, "composites.mass", 0.0, 1.0, (-3.0, 3.0), 1_074_469_052),
+        ];
+        for (seed, axis, default, sigma, range, bits) in pinned {
+            let drawn = Rolls::new(seed).shape(axis, default, sigma, range);
+            let want = f32::from_bits(bits);
+            if seed == 16 {
+                assert_eq!(
+                    drawn.to_bits(),
+                    bits,
+                    "seed {seed} {axis}: the wildcard moved"
+                );
+            } else {
+                assert!(
+                    (drawn - want).abs() <= 1e-5 * want.abs(),
+                    "seed {seed} {axis}: drew {drawn}, pinned {want}"
+                );
+            }
+        }
+    }
+
+    #[test]
+    fn a_bimodal_draw_has_two_peaks_and_a_trough() {
+        // The frame axis's draw (#486): two equal bells at the references and
+        // the wildcard over the envelope. Deterministic per seed and per axis
+        // first, since a seed is worth storing only if it is.
+        let draw =
+            |seed: i64, axis: &str| Rolls::new(seed).bimodal(axis, (-1.0, 1.0), 0.4, (-3.0, 3.0));
+        assert_eq!(draw(42, "axis.a").to_bits(), draw(42, "axis.a").to_bits());
+        assert_ne!(draw(42, "axis.a"), draw(42, "axis.b"));
+        assert_ne!(draw(42, "axis.a"), draw(43, "axis.a"));
+
+        let count = 20_000;
+        let all: Vec<f32> = (0..count).map(|seed| draw(seed, "axis.a")).collect();
+        let share = |keep: &dyn Fn(f32) -> bool| {
+            all.iter().filter(|value| keep(**value)).count() as f32 / count as f32
+        };
+        // Each side about half: the mode coin is fair.
+        let (low, high) = (share(&|v| v < 0.0), share(&|v| v > 0.0));
+        assert!(
+            (0.47..0.53).contains(&low) && (0.47..0.53).contains(&high),
+            "{low} {high}"
+        );
+        // A trough between: two bells of sigma 0.4 put 4% inside |x| < 0.3,
+        // and the wildcard adds a third of a percent. One bell of sigma 1 on the
+        // middle, the draw this replaced, put 23% there.
+        let middle = share(&|v| v.abs() < 0.3);
+        assert!((0.025..0.06).contains(&middle), "{middle} inside |x| < 0.3");
+        // Two peaks near the modes: the densest 0.2-wide bin on each side
+        // straddles its reference, and holds several times the middle's bin.
+        let bins: Vec<f32> = (-15..15)
+            .map(|bin| {
+                let at = bin as f32 * 0.2;
+                share(&|v| v >= at && v < at + 0.2)
+            })
+            .collect();
+        let peak = |side: std::ops::Range<usize>| {
+            side.max_by(|a, b| bins[*a].total_cmp(&bins[*b]))
+                .map(|bin| (bin as f32 - 15.0) * 0.2 + 0.1)
+                .expect("bins")
+        };
+        let (left, right) = (peak(0..15), peak(15..30));
+        assert!(
+            (left + 1.0).abs() < 0.25 && (right - 1.0).abs() < 0.25,
+            "peaks at {left} {right}"
+        );
+        assert!(
+            bins[15] < bins[19] / 4.0 && bins[14] < bins[10] / 4.0,
+            "{bins:?}"
+        );
+        // And the wildcard still reaches past the bells: a bell of sigma 0.4
+        // never lands at 2.5, a uniform draw over the envelope does.
+        assert!(share(&|v| v.abs() > 2.5) > 0.001);
+    }
 
     #[test]
     fn an_axis_with_a_large_natural_unit_survives_the_thousandths_encoder() {

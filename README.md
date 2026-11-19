@@ -86,7 +86,11 @@ Three things shape the record and are worth knowing before adding fields:
 
 Re-rolling draws each category — stature, build, frame, proportions, head,
 colouring, hair, age, outfit — from its own seed stream, so locking one category
-never reshuffles another. A look also renders as a short share code:
+never reshuffles another. A person is drawn as a population of people: the
+frame as two bells on the measured male and female references, stature at the
+measured means for each, facial hair rare on a feminine body, and the amounts a
+body grows clustered round typical values, with a rare draw reaching the
+extremes. A look also renders as a short share code:
 
 ```text
 0W0Y2-1BBFX-V812W-CH1YC-A5G7P-7BPH6-R0K0
@@ -292,7 +296,9 @@ The catalogue has two families:
   and flanks on a face. A scalp helmet may break its rim with a few cards.
 
 A re-roll draws a card style nine times in ten and a helmet the tenth, and
-never a sculpted face; the editor reaches every style.
+never a sculpted face; the editor reaches every style. On a person the card
+style leans gently with the frame: the long styles up to twice as likely on a
+feminine body and a crop on a masculine one, every style possible on either.
 
 A build can also grow a **far tier** (`AvatarConfig::far_hair`): the head of
 hair a renderer swaps in past about twelve metres, handed back as

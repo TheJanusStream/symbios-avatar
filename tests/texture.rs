@@ -161,12 +161,16 @@ fn painting_does_not_bloat_the_record() {
     // (#358): measured, 1961 — the outfit block is 96 bytes where hue, shade
     // and two cut names wrote 89. Seed 3's roll wears no texture; one that
     // does carries its whole generator config, a few hundred bytes, which is
-    // the record's budget's business and not this ratchet's.
+    // the record's budget's business and not this ratchet's. Raised
+    // 1965 -> 1970 for generation 12 (#486): measured, 1962 -> 1967, five
+    // bytes of digits. Seed 3's beard fullness was a uniform draw of 0.031
+    // and is a bell's 0.372 now, so six cut numbers write three digits where
+    // they wrote two; the record's shape did not change.
     // Report the size, because "by how much" is the only useful thing to know
     // when a ratchet fires.
     let size = record.serialized_size().expect("serialises");
     assert!(
-        size < 1965,
+        size < 1970,
         "a whole avatar is {size} bytes, and should still be a couple of kilobytes"
     );
 }

@@ -72,12 +72,48 @@ fn fnv1a_64(text: &str) -> u64 {
 /// the extremities bring their own joints, so the sole points every foot
 /// measurement below reads are not in the record's skeleton at all.
 fn body_of(did: &str) -> Avatar {
+    body_edited(did, |_| {})
+}
+
+/// The body the bounds in this file were measured on: the one generation 11
+/// rolled for `did:plc:stop-test`, pinned rather than rolled.
+///
+/// **Pinned since generation 12** (#486, Overlands #1953), which re-rolled
+/// every person: this identity now rolls a masculine frame of -1.568 at
+/// 1.715 m where it rolled a feminine 0.743 at 1.562 m, and every bound below
+/// is an absolute length read off that 1.562 m body - the bow's 20 mm, the
+/// pivot's 80 mm in a frame, and the 420 mm the consuming application agreed
+/// for a quarter turn (#1323) among them. On the taller body the readings
+/// scale with its stature (a quarter turn 348.5 mm on average against 313,
+/// W then A 463 mm against 381) and four of those bounds fail, which says
+/// the body changed and not the driver. So the four composites and the
+/// stature are set to what generation 11 drew - mass and age are drawn as
+/// they were, and are set anyway so the pin does not lean on that - and every
+/// other axis the rig reads comes from the roll unchanged: the per-region
+/// offsets did not move. Whether the bounds should follow the commonest
+/// bodies a roll now draws is the owner's question; until it is answered,
+/// they keep measuring the body they were set on.
+fn stop_test_body() -> Avatar {
+    body_edited("did:plc:stop-test", |record| {
+        record.composites.femininity = 0.743;
+        record.composites.mass = -1.023;
+        record.composites.body_fat = 0.060;
+        record.composites.age = 38;
+        if let Archetype::Humanoid(params) = &mut record.archetype {
+            params.height = 1.562;
+        }
+    })
+}
+
+/// [`body_of`], with the rolled record changed by `edit` before it is built.
+fn body_edited(did: &str, edit: impl FnOnce(&mut AvatarRecord)) -> Avatar {
     let seed = fnv1a_64(did) as i64;
     let mut record = AvatarRecord::rolled("Wanderer", Archetype::default(), seed);
     let (low, high) = plan::humanoid_height_range();
     if let Archetype::Humanoid(params) = &mut record.archetype {
         params.height = params.height.clamp(low, high);
     }
+    edit(&mut record);
     record.sanitize();
     Avatar::build_with(
         &record,
@@ -1099,7 +1135,7 @@ fn a_walking_body_holds_its_planted_sole_at_every_pace() {
     // is a threshold between 1.0 and 1.2 m/s, which is neither of the two
     // candidates a pair suggested. A guard at 1.4 alone would have passed
     // throughout the defect's life at 0.7.
-    let avatar = body_of("did:plc:stop-test");
+    let avatar = stop_test_body();
     let rig = avatar.rig.clone();
     for metres in [0.4f32, 0.7, 1.0, 1.2, 1.4, 1.6, 1.8] {
         let skate = skate_through(&rig, 120, metres, metres, 1, None);
@@ -1126,7 +1162,7 @@ fn a_bow_over_a_walk_keeps_its_planted_soles() {
     // the drawn foot is a mix of the settled walk and the bowed walk. A wave
     // moves no leg and its blend drags nothing; a whole-body bow gives the
     // blend a little hip line to mix across.
-    let avatar = body_of("did:plc:stop-test");
+    let avatar = stop_test_body();
     let rig = avatar.rig.clone();
     let bowed = skate_through(&rig, 120, 1.0, 1.0, 1, Some("Bow"));
     assert!(
@@ -1275,7 +1311,7 @@ fn a_stop_does_not_skate() {
     // that band has moved the sample, not the stop — so the median of the
     // thirty-one stops is held as well, which a regression lifting the
     // ordinary phases moves and a knife edge cannot: 19.07 mm.
-    let avatar = body_of("did:plc:stop-test");
+    let avatar = stop_test_body();
     let rig = avatar.rig.clone();
     let mut skids: Vec<f32> = (100..=130)
         .map(|frames| skid_through_a_stop(&rig, frames))
@@ -2251,7 +2287,7 @@ fn slide(frames: &[&Stance]) -> f32 {
 #[test]
 #[ignore = "probe for #337: prints the turning tables through the replica chassis"]
 fn probe_what_a_turn_does_to_the_stance() {
-    let avatar = body_of("did:plc:stop-test");
+    let avatar = stop_test_body();
     let rig = avatar.rig.clone();
     let configs = [
         ("driver default", DriverConfig::default()),
@@ -2351,7 +2387,7 @@ fn probe_what_the_orbit_costs_at_every_moment() {
     // A start from standing begins at cycle 0 whatever the stand, so it is
     // swept by the speed the keys ask for; a change of keys by the moment of
     // the stride it lands at.
-    let rig = body_of("did:plc:stop-test").rig;
+    let rig = stop_test_body().rig;
     // Each reading is what it was swept by - a speed or a lead span - and
     // the worst of its window.
     let summary = |name: &str, readings: &[(f32, Worst)]| {
@@ -2673,7 +2709,7 @@ fn jumps(frames: &[&Stance]) -> (f32, f32) {
 #[test]
 #[ignore = "probe for #361 and #362: prints what a pivot does setting off, stopping and drifting"]
 fn probe_what_a_pivot_does_at_its_edges() {
-    let avatar = body_of("did:plc:stop-test");
+    let avatar = stop_test_body();
     let rig = avatar.rig.clone();
     let steady = looked(&rig, &LOOKS[7], false, DriverConfig::default());
     let (planted, any) = jumps(&held(&steady, &LOOKS[7]));
@@ -2792,7 +2828,7 @@ fn appearing(frames: &[Stance]) -> Vec<&Stance> {
 #[test]
 #[ignore = "probe for #361 and #362: prints the first-person tables through the replica chassis"]
 fn probe_what_first_person_does_to_the_stance() {
-    let avatar = body_of("did:plc:stop-test");
+    let avatar = stop_test_body();
     let rig = avatar.rig.clone();
     for script in &LOOKS {
         for run in [false, true] {
@@ -2857,7 +2893,7 @@ fn a_strafe_keeps_its_planted_soles_and_its_feet_apart() {
     // body's whole speed. Now the stride is the heading's working one, a
     // crossover in a split stance: the soles hold as a forward walk's do, and
     // the feet pass each other a split's depth apart.
-    let avatar = body_of("did:plc:stop-test");
+    let avatar = stop_test_body();
     let rig = avatar.rig.clone();
     let apart = clearance(&rig);
     let control: Vec<Stance> = looked(&rig, &LOOKS[0], false, DriverConfig::default());
@@ -2931,7 +2967,7 @@ fn a_back_up_and_the_diagonals_keep_their_planted_soles() {
     // body backing up or going diagonally covers exactly the ground it treads.
     // Through 0.11 the stride was the reach's share of the travel at the
     // cadence of the whole: S slid 91 mm a second held, S+A 148, W+D 106.
-    let avatar = body_of("did:plc:stop-test");
+    let avatar = stop_test_body();
     let rig = avatar.rig.clone();
     for script in [&LOOKS[3], &LOOKS[4], &LOOKS[5]] {
         for run in [false, true] {
@@ -2960,7 +2996,7 @@ fn a_strafe_turning_into_a_backward_diagonal_keeps_its_stance() {
     // half its stance width (72 mm on this body) where the split keeps 150.
     // Across every moment of the stride the keys can change at: 23 mm on
     // average at a walk and 48 at worst, a millimetre or two at a run.
-    let avatar = body_of("did:plc:stop-test");
+    let avatar = stop_test_body();
     let rig = avatar.rig.clone();
     let apart = clearance(&rig);
     for spans in swept((LEFTWARD, 0.0), (BACK_LEFT, 0.0)) {
@@ -3033,7 +3069,7 @@ fn a_change_of_heading_slides_less_than_the_turn_the_stance_agreed() {
     // run 46 and 163 at most. The ruler is the one the consuming application
     // agreed for a quarter turn in the orbit (#1323): that turn slides 339 mm
     // against a 420 mm ceiling.
-    let avatar = body_of("did:plc:stop-test");
+    let avatar = stop_test_body();
     let rig = avatar.rig.clone();
     for (name, first, second) in [
         ("W then A", AHEAD, LEFTWARD),
@@ -3069,7 +3105,7 @@ fn a_body_turning_where_it_stands_steps_round_on_planted_feet() {
     // stances turn — and its planted feet stay where they are while the other
     // steps round. Held at 90 degrees a second, and handed back to the idle
     // once the turn stops.
-    let avatar = body_of("did:plc:stop-test");
+    let avatar = stop_test_body();
     let rig = avatar.rig.clone();
     let apart = clearance(&rig);
     let script = &LOOKS[7];
@@ -3128,7 +3164,7 @@ fn a_walk_turning_with_its_eyes_keeps_its_feet() {
     // eases along its arc rather than across the chord, which cut toward the
     // other foot. Through 0.11, fed the same turn, the walk slid its soles
     // 45.5 mm a second and passed its feet 0.8 mm apart.
-    let avatar = body_of("did:plc:stop-test");
+    let avatar = stop_test_body();
     let rig = avatar.rig.clone();
     let apart = clearance(&rig);
     let script = &LOOKS[10];
@@ -3161,7 +3197,7 @@ fn a_pivot_whose_heading_appears_keeps_its_planted_feet() {
     // cut of 0.12 took the pivot's stride of no length toward it, split stance
     // and all, and a planted foot moved 126-141 mm in the frame the heading
     // appeared; the drift itself moves one about 4 mm a frame.
-    let rig = body_of("did:plc:stop-test").rig;
+    let rig = stop_test_body().rig;
     for rate in [0.5f32, 0.75, 1.0] {
         for drift in [0.15f32, 0.2, 0.25] {
             let frames = drifting(&rig, rate, drift);
@@ -3185,7 +3221,7 @@ fn setting_off_from_a_pivot_blends_as_setting_off_from_standing_does() {
     // a planted foot moved up to 157 mm in one frame; blended, as the idle's
     // start is, the worst frame at any moment of the stride is 41 mm setting
     // off and 75 stopping, where a walk set off from standing moves one 38.
-    let rig = body_of("did:plc:stop-test").rig;
+    let rig = stop_test_body().rig;
     let turning = std::f32::consts::FRAC_PI_2;
     for (name, first, second) in [
         ("looking round, then A", STILL, LEFTWARD),
@@ -3224,7 +3260,7 @@ fn a_turn_that_ends_hands_back_the_straight_walk() {
     // Two bodies on one clock, one of them told a second's turn: once the
     // turn has eased out and each foot has stepped since, they are one body
     // to the bit.
-    let rig = body_of("did:plc:stop-test").rig;
+    let rig = stop_test_body().rig;
     let cadence = Speed::new(&rig, 1.4).cadence(&rig);
     let (mut turned, mut straight) = (
         Driver::seeded(INSTRUMENT_SEED),
@@ -3266,7 +3302,7 @@ fn a_heading_straight_ahead_is_no_heading_at_all() {
     // of its own spelling, which at a steady pace is the speed axis's to a
     // float's resolution and no closer: at most of these speeds the clocks
     // drifted apart by a ULP a frame, a millimetre at a joint by the end.
-    let rig = body_of("did:plc:stop-test").rig;
+    let rig = stop_test_body().rig;
     for speed in [0.4f32, 0.5, 0.9, 1.1, 1.4, 1.6, 1.8, 2.0, 2.9, 3.6, 4.0] {
         let (mut ahead, mut none) = (
             Driver::seeded(INSTRUMENT_SEED),
@@ -3310,7 +3346,7 @@ fn a_heading_steps_the_ground_the_body_covers() {
     // from a turn slid them 390 mm at worst walking and 665 running. Stepped
     // at the ground the body covers: 163 from standing, and 103 at worst from
     // a turn.
-    let rig = body_of("did:plc:stop-test").rig;
+    let rig = stop_test_body().rig;
     for run in [false, true] {
         let pace = if run { "run" } else { "walk" };
         let frames = looked(&rig, &LOOKS[0], run, DriverConfig::default());
@@ -3353,7 +3389,7 @@ fn a_body_with_no_heading_steps_the_ground_it_covers_too() {
     // and 114 out of one. Stepped at the ground the body covers, as a
     // heading's stride is: 164 from standing at any speed, and 19 at worst
     // through a change of pace.
-    let rig = body_of("did:plc:stop-test").rig;
+    let rig = stop_test_body().rig;
     // A start from standing begins at cycle 0 whatever the stand, so it is
     // swept by the speed the keys ask for, from a slow walk to a fast run.
     for step in 0..16 {
@@ -3446,7 +3482,7 @@ fn a_jittering_velocity_is_stepped_at_its_mean() {
     // the pace's own cadence, as the first cut of 0.12 was, the walk ahead
     // stepped 7% fast; capped at the pace's own heading cadence, the strafe
     // 4.6% slow.
-    let rig = body_of("did:plc:stop-test").rig;
+    let rig = stop_test_body().rig;
     let stepped = |heading: symbios_avatar::Heading, speed: f32, noise: f32| {
         let mut driver = Driver::seeded(INSTRUMENT_SEED);
         let toward = heading.direction();
@@ -3498,7 +3534,7 @@ fn a_squeezed_stride_steps_no_faster_than_its_heading_or_a_sprint() {
     // cycles a second and a run 6.02, twice what the heading's own reach
     // asks. Held to the faster of that and the legs' sprint cadence, the
     // stance covers what it can and the planted foot gives the rest.
-    let rig = body_of("did:plc:stop-test").rig;
+    let rig = stop_test_body().rig;
     let sprint = Speed::from_froude(symbios_avatar::anim::speed::FROUDE_SPRINT).cadence(&rig);
     for speed in [1.4f32, 4.0] {
         for degrees in 90..=180 {

@@ -22,7 +22,7 @@
 use glam::{Vec2, Vec3};
 use serde::{Deserialize, Serialize};
 
-use super::derive::humanoid::{Dimensions, frame};
+use super::derive::humanoid::{Dimensions, between};
 use super::{Anatomy, CompositePriors, Composites, Limb, Zone};
 use super::{
     BodyPlan, Category, PlanDecodeError, Rolls, put_length, put_span, take_length, take_signed,
@@ -71,31 +71,57 @@ const OFFSET_SIGMA: f32 = 1.0 / 3.0;
 /// and the walk sheets.
 const TOE_OUT: f32 = 7.0_f32.to_radians();
 
-/// How far a rolled stature strays from its centre, in metres.
+/// Where a rolled stature centres at each end of the frame axis, in metres:
+/// the measured adult means, men's then women's.
 ///
-/// **This narrows the stature draw, and it is the one judgement in the reroll
-/// scheme that is not forced**, so it is written down where it can be
-/// reversed with one number.
+/// **The measurement itself, not a ratio on the plan's default** (#486,
+/// Overlands #1953). Through generation 11 the centre was `default_height()`
+/// times `frame(f, 1.75, 1.62)`, which kept the plan's 1.75 m as the neutral
+/// body and moved it by the ratio of the means - and with the frame axis one
+/// bell on the middle that was the honest bargain. Now the axis draws its two
+/// populations at the references themselves, so the centre at each reference
+/// is that population's own mean: `derive::humanoid::between` of the
+/// two, and a body halfway between is the midpoint of the sexes, 1.69 m.
+/// `default_height()` stays 1.75: it is what an unrolled record stands at,
+/// and that is not this draw's question.
 ///
-/// The blanket rule gives every shape axis a sigma of its old fence's
-/// half-width. On the signed axes that is ±1, a sane typical draw. On stature
-/// the fence is `HEIGHT_RANGE`, so the same rule would give **0.5 m**: a
-/// one-sigma body at 1.25 m or 2.25 m, and measured over 400 seeds the rolled
-/// statures had a standard deviation of 0.537 m. That is not a population,
-/// and it drowns the frame axis's own claim on stature — the frame
-/// correlation moves the centre by 0.068 m, which against 0.537 m of noise
-/// is a correlation coefficient of −0.16, a real term drowned by an accident
-/// of a rule written for a different kind of axis.
+/// Provenance: **looked up**, NHANES 2011-2016 adult means (owner call on
+/// the source, #1953).
+const STATURE_MEANS: (f32, f32) = (1.757, 1.618);
+
+/// How far a rolled stature strays from its centre, in metres, at each end of
+/// the frame axis: men's then women's.
 ///
-/// 0.12 m is about 1.7× the adult within-sex standard deviation, so two sigma
-/// spans roughly 1.51 to 1.99 m and a rolled crowd reads as a crowd. **The
-/// exploration that the wide sigma was standing in for is not lost**: the
-/// wildcard tail is untouched, so one seed in thirty still draws uniformly over
-/// the whole 0.5–3.1 m envelope and giants remain a roll away.
+/// **The measured within-sex standard deviation, less what the frame axis
+/// already carries** (#486). NHANES 2011-2016 puts it at 7.6 cm for men and
+/// 6.4 cm for women. A rolled frame is itself spread about its reference -
+/// `composites::FRAME_SIGMA`, 0.4 - and the centre moves 0.0695 m per unit
+/// of the axis, so a sex's statures already spread 0.028 m before this draw
+/// adds anything. The two add in quadrature:
 ///
-/// Provenance: **judged against the population it draws** — the measurement
-/// above, then reroll contact sheets.
-const STATURE_SIGMA: f32 = 0.12;
+/// ```text
+///   sqrt(0.0707^2 + 0.028^2) = 0.076      men
+///   sqrt(0.0576^2 + 0.028^2) = 0.064      women
+/// ```
+///
+/// Read at the frame axis clamped to its references, so a wildcard frame
+/// past either end draws with that end's spread rather than an extrapolated
+/// one.
+///
+/// **History.** Through generation 11 this was one sigma, 0.12 m, about 1.7x
+/// the within-sex figure, because a frame axis drawn as one bell on the middle
+/// could not carry the two sexes' spread and the stature draw had to fake the
+/// mix. With the frame drawn as two populations it no longer has to, and the
+/// narrower figure is the measured one. Before that (generation 2) the
+/// blanket rule had given stature half its fence, 0.5 m, and a population
+/// whose standard deviation measured 0.537 m. **The exploration a wide sigma
+/// stood in for is not lost**: the wildcard is untouched, so one seed in
+/// thirty still draws uniformly over the whole stature envelope and giants
+/// and small bodies remain a roll away.
+///
+/// Provenance: **looked up** for the two deviations, **derived** for the
+/// subtraction (#1953).
+const STATURE_SIGMA: (f32, f32) = (0.0707, 0.0576);
 
 /// The envelope every signed axis clamps and encodes against.
 fn signed_envelope() -> (f32, f32) {
@@ -629,25 +655,25 @@ impl BodyPlan for HumanoidParams {
         match category {
             Category::Stature => {
                 // **The one correlation on this plan, and it is the loudest
-                // one a body has** (#169). Stature is dimorphic — the adult
-                // means run about 1.75 m against 1.62 — and until now the
-                // frame axis and the height axis were drawn in ignorance of
-                // each other, so a seed was as likely to be a 1.9 m body with
-                // a fully feminine frame as anything else.
+                // one a body has** (#169). Stature is dimorphic, and until
+                // generation 3 the frame axis and the height axis were drawn in
+                // ignorance of each other, so a seed was as likely to be a 1.9 m
+                // body with a fully feminine frame as anything else.
                 //
-                // **A ratio on the plan's own default, never a replacement of
-                // it**, which is `derive::humanoid::frame`'s bargain and is
-                // taken here for the same reason: `default_height` is 1.75 and
-                // whether that is the right neutral stature is not this
-                // issue's question. So the neutral body still rolls about
-                // 1.75, and the two ends of the frame axis sit at 1.818 and
-                // 1.683 — a ratio of 1.080, exactly the ratio of the means.
+                // **At the measured means since generation 12** (#486,
+                // Overlands #1953): the centre is the measured mean between
+                // the two references and the spread is each sex's measured
+                // deviation less what the frame axis carries - see
+                // `STATURE_MEANS` and `STATURE_SIGMA`. Through generation 11 it
+                // was a ratio on `default_height()`, 1.818 and 1.683 m at the
+                // two ends, with one wide sigma standing in for the sexes'
+                // mix.
                 //
-                // Provenance: **looked up** for the pair of means, applied
-                // through the crate's own `frame` idiom (#169).
-                let stature = default_height() * frame(composites.femininity, 1.75, 1.62);
-                self.height =
-                    rolls.shape("humanoid.height", stature, STATURE_SIGMA, height_envelope());
+                // Provenance: **looked up**, NHANES 2011-2016 (#1953).
+                let f = composites.femininity;
+                let stature = between(f, STATURE_MEANS.0, STATURE_MEANS.1);
+                let sigma = between(f.clamp(-1.0, 1.0), STATURE_SIGMA.0, STATURE_SIGMA.1);
+                self.height = rolls.shape("humanoid.height", stature, sigma, height_envelope());
             }
             Category::Build => {
                 // **Build rather than Frame, and the choice is a promise to a

@@ -7,8 +7,10 @@
 //! [`Category::Outfit`](crate::Category::Outfit), drawn from streams named for
 //! itself, so no other axis moved on any seed.
 //!
-//! **Culture, not anatomy, so uncoupled** — the rule the hair roll states for
-//! a haircut. Nothing here reads the frame axis or the age: which cut
+//! **Culture, not anatomy, so uncoupled** - the rule the hair roll stated for
+//! a haircut from #203 until #486, when the owner gave the haircut a gentle
+//! lean on the frame axis so a rolled population reads as people. The outfit
+//! keeps the rule: nothing here reads the frame axis or the age, as which cut
 //! somebody wears is not a property of their body. The two things it does
 //! read are legibility rather than taste: a top the colour of the skin under it
 //! reads as bare skin, and a top the colour of the trousers reads as one

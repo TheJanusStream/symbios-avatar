@@ -92,6 +92,30 @@ pub const DEFAULT_AGE: u32 = 28;
 /// body no one has aged is bit-identical to the plan's own base body.
 pub const AGE_PIVOT: u32 = 30;
 
+/// Where a person's re-rolled frame axis peaks: the two references it
+/// interpolates, the measured male body at `-1` and the female at `+1`
+/// (`derive::humanoid::frame`).
+///
+/// **A population of people is two populations on this axis**, and the
+/// references are where each one is (#486, Overlands #1953). Drawn by
+/// [`Rolls::bimodal`], with the mode a fair coin.
+///
+/// Provenance: **owner call** for the modes and their equal weight.
+const FRAME_MODES: (f32, f32) = (-1.0, 1.0);
+
+/// How far a re-rolled frame strays from its reference.
+///
+/// **0.4, which puts about one body in twenty-five in the androgynous middle**
+/// (|f| < 0.3): at `0` the two bells together reach under a tenth of either
+/// peak's height, so an in-between body is a roll that turns up rather than a body the
+/// roll is built around. Wider and the two bells fill the middle back in; much
+/// narrower and every rolled body is one of two silhouettes. It also sets how
+/// much of stature's within-sex spread the frame axis carries, which
+/// `plan::humanoid`'s stature draw subtracts from its own sigma.
+///
+/// Provenance: **owner call** (#1953), on the middle share it gives.
+const FRAME_SIGMA: f32 = 0.4;
+
 /// The exploration envelope of the two signed composites.
 fn signed_envelope() -> (f32, f32) {
     explore_range(0.0, (-1.0, 1.0))
@@ -356,7 +380,22 @@ impl Composites {
                 self.body_fat = rolls.shape("composites.bodyFat", centre, 0.07, BODY_FAT_RANGE);
             }
             Category::Frame if priors.frame => {
-                self.femininity = rolls.shape("composites.femininity", 0.0, 1.0, signed_envelope());
+                // **Two bells, one on each reference, since generation 12**
+                // (#486, Overlands #1953, owner call). Through generation 11
+                // this was one bell of sigma 1 on `0`, which made the
+                // androgynous middle the commonest body a re-roll drew: about
+                // a quarter of rolls inside |f| < 0.3, where the two measured
+                // references the axis interpolates sit at -1 and +1. Now each
+                // half of the population is a bell of `FRAME_SIGMA` on its own
+                // reference, so about one body in twenty-five lands in that
+                // middle, and the wildcard still reaches the whole envelope.
+                // Same stream name, so no other axis moves on any seed.
+                self.femininity = rolls.bimodal(
+                    "composites.femininity",
+                    FRAME_MODES,
+                    FRAME_SIGMA,
+                    signed_envelope(),
+                );
             }
             Category::Age => {
                 // **Widened, and the old prior could not reach the axis it

@@ -87,6 +87,44 @@ pub const MAX_NAME_CHARS: usize = 64;
 /// the others, so this should move rarely — but when it does, a reader carrying
 /// an older number knows the body it rebuilds is not the body that was rolled.
 ///
+/// **12** - a person's roll is drawn as a population of people (#486,
+/// Overlands #1953, owner calls). Six changes, batched, every one on the
+/// stream it always drew from:
+///
+/// - the frame axis (`composites.femininity`) is two equal bells of sigma 0.4
+///   on the references at -1 and +1 ([`crate::plan::Rolls::bimodal`]), where
+///   it was one bell of sigma 1 on the androgynous middle; the wildcard is
+///   kept. About one body in twenty-five lands inside |f| < 0.3, where a
+///   quarter did.
+/// - stature (`humanoid.height`) centres on the measured adult means, 1.757 m
+///   and 1.618 m (NHANES 2011-2016), between the references, with each sex's
+///   measured deviation (7.6 and 6.4 cm) less what the frame axis carries,
+///   where it was a ratio on the plan's 1.75 m with a 0.12 m sigma.
+/// - facial hair is one in a hundred from neutral to feminine and rises along
+///   a smoothstep to 60% at the masculine reference, superseding #203's
+///   quarter at neutral; and the painted shadow of a shaved jaw is on a face
+///   that grows no beard only as far as it is masculine, where every face
+///   under a femininity of 0.4 carried it.
+/// - the scalp's card pick leans gently on the frame axis, superseding #203's
+///   uncoupled table: Bob, Long and TiedBack weigh up to double toward the
+///   feminine reference, Crop toward the masculine one. A neutral body draws
+///   the table it drew.
+/// - the body traits are bells on their old ranges' middles, the wildcard
+///   uniform over the old range: hair and brow density and thickness, beard
+///   fullness and coarseness, greying's rate, and a person's blush.
+/// - skin tone stays uniform (#160), as do every style axis, the hairline, the
+///   hair's length and droop, the shades and hues, and the outfit.
+///
+/// Every person seed is a different person. **A beast and a winged body
+/// build to the byte and keep their share codes**: none of them draws a
+/// frame axis, a stature on the humanoid plan, a haircut or a beard, and a
+/// body that paints no skin keeps blush's old uniform draw. Its record moves
+/// by its stamp alone: one rolled now writes `generator` 12 where generation
+/// 11 wrote 11. No
+/// migration, for generation 7's reason: nothing re-rolls a record that is
+/// only being read, so a saved person keeps the body it was saved with and
+/// its stamp.
+///
 /// **11** - a re-rolled winged body draws its surface (#423): a bird-led roll
 /// draws its plumage, one of a short list of palettes for the kind of bird its
 /// head is drawn as, a little lighter or darker, and a layout for its marks, on
@@ -232,7 +270,7 @@ pub const MAX_NAME_CHARS: usize = 64;
 /// categories in sequence from one stream, so any seed rolled by an earlier
 /// build reproduces a different person here. That break is taken deliberately
 /// and once, while the lexicon is unpublished and nothing depends on it.
-pub const GENERATOR_VERSION: u32 = 11;
+pub const GENERATOR_VERSION: u32 = 12;
 
 /// The generation whose hair a record has to be re-rolled to reach.
 ///
@@ -508,10 +546,14 @@ impl AvatarRecord {
     /// Idempotent, because it stamps the generation it brought the record to
     /// and does nothing when there is nothing to do.
     ///
-    /// Stamping [`GENERATOR_VERSION`] afterwards is exact rather than
-    /// approximate: generation 4 changed how hair is drawn and nothing else, so
-    /// a generation-3 record with its hair re-drawn by 4 is what 4 would have
-    /// drawn from that seed.
+    /// Stamping [`GENERATOR_VERSION`] afterwards was exact when this was
+    /// written: generation 4 changed how hair is drawn and nothing else, so a
+    /// generation-3 record with its hair re-drawn by 4 was what 4 would have
+    /// drawn from that seed. Later generations moved other draws too -
+    /// generation 12 the frame, the stature and how the hair reads the frame
+    /// (#486) - so a migrated record is its stored body with the current
+    /// generation's hair drawn on its stored composites, not what a fresh roll
+    /// of its seed draws now; the stamp says which generation drew its hair.
     fn migrate(&mut self) {
         if self.generator >= HAIR_GENERATION {
             return;
@@ -609,7 +651,9 @@ impl AvatarRecord {
                     }
                     reroll_eyes(&mut self.eyes, &rolls, &self.archetype);
                 }
-                Category::Colouring => reroll_skin(&mut self.skin, &rolls),
+                Category::Colouring => {
+                    reroll_skin(&mut self.skin, &rolls, anatomy.human_trunk());
+                }
                 Category::Hair if anatomy.human_head() => {
                     reroll_hair(&mut self.hair, &rolls, &self.composites);
                 }
@@ -900,11 +944,20 @@ const HELMET_SHARE: f64 = 0.10;
 /// argument for a lock of its own.
 ///
 /// **Five regions**, drawn from the streams their own names give
-/// them. The composites keep their say — a beard is strongly sexed and a
-/// hairline recedes with age.
+/// them. The composites keep their say: a beard is strongly sexed, a haircut
+/// leans gently with the frame axis (#486), and a hairline recedes with age.
 fn reroll_hair(hair: &mut HairRecord, rolls: &Rolls, composites: &crate::Composites) {
-    // Hair is a style, not a shape: it keeps its uniform draws and its
-    // conservative ranges, for the same reason complexion does.
+    // **A style is drawn uniformly and a body trait as a bell** (#486,
+    // Overlands #1953, owner call). Through generation 11 every hair axis kept
+    // a uniform draw, on the argument that hair is a style and not a shape, as
+    // complexion is not an extreme of anything. That holds for what a person
+    // CHOOSES - the style, its axis, the length, the hairline's window - and
+    // they stay uniform. It does not hold for what a body GROWS: how dense and
+    // how coarse the hair, the brows and the beard are is a trait with a
+    // typical value and a rare end, so those six axes (and greying's rate, in
+    // `rolled_colour`) are [`Rolls::shape`] draws on their old ranges' middles
+    // with a fifth of the range as sigma. The wildcard still draws uniformly
+    // over the old range, so its ends stay a roll away.
     let masculinity = -composites.femininity.clamp(-1.0, 1.0);
     let ageing = composites.ageing();
 
@@ -929,20 +982,29 @@ fn reroll_hair(hair: &mut HairRecord, rolls: &Rolls, composites: &crate::Composi
 
     let (roots, tips) = rolled_colour(rolls, ageing);
 
-    // **The scalp draws its style from the catalogue, and draws it UNCOUPLED**
-    // (#203, owner call). The two couplings this crate does make — a hairline
-    // that recedes with age and masculinity, and facial hair gated the same way
-    // — are both anatomy. A haircut is not: which style a person wears is
-    // culture, and an engine whose deliverable is a BODY has no business
-    // encoding an expectation about who wears their hair long. The editor is
-    // where a deliberate look is set, and a re-roll's job here is variety.
+    // **The scalp draws its style from the catalogue, with a gentle lean on
+    // the frame axis** (#486, Overlands #1953, owner call). History: from
+    // generation 5 (#203, owner call) the pick was deliberately UNCOUPLED from
+    // the frame axis, on the argument that a haircut is culture where the
+    // hairline and the beard are anatomy, and that the editor is where a
+    // deliberate look is set. The owner revisited that at #1953: a rolled
+    // population is meant to read as people, and in most of the references
+    // people come from a feminine body wears its hair long more often than a
+    // masculine one does. So the lean is a lean and not a rule: at the
+    // feminine reference Bob, Long and TiedBack each weigh double, and at the
+    // masculine one Crop does, rising linearly from nothing at neutral. Curly
+    // and the helmet coin do not lean. Every style stays possible on every
+    // body: at the feminine reference the long styles are about 71% of card
+    // picks and crops 23%, at the masculine one crops 52% and the long styles
+    // 41%, and a neutral body draws exactly the table it drew before.
     //
     // Weighted toward the short end anyway, because a crop is what most heads
     // in most references are and a population of curtains reads as a costume
     // department.
     //
-    // Provenance: **owner call** for the absence of coupling, **sized by eye**
-    // against the render sheet of a rolled population.
+    // Provenance: **owner call** for the lean and its size (#1953), and
+    // before it for the uncoupled table (#203); **sized by eye** against the
+    // render sheet of a rolled population.
     //
     // **A tenth of a rolled population wears a helmet** (#351, owner call), and
     // the coin is on a stream of its own. Appending the seven helmets to the
@@ -952,7 +1014,8 @@ fn reroll_hair(hair: &mut HairRecord, rolls: &Rolls, composites: &crate::Composi
     // control seed 7. The coin changes exactly the seeds it lands on - none of
     // seeds 0, 1, 7, 23, 29, 42 or 99 - and every other seed keeps the hair it
     // had to the byte. Which helmet is an even pick, and its axis is uniform,
-    // for the reason a card style's is. Uncoupled, like the card pick.
+    // for the reason a card style's is. Uncoupled from the frame axis, where
+    // the card pick leans.
     //
     // Provenance: **owner call** for the share, the evenness and the coin,
     // on #351's measurement of what a rolled helmet costs (about 50 triangles
@@ -970,7 +1033,12 @@ fn reroll_hair(hair: &mut HairRecord, rolls: &Rolls, composites: &crate::Composi
             _ => ScalpStyle::Braids { rows: axis },
         }
     } else {
-        match rolls.pick("hair.style", &[35.0, 20.0, 20.0, 15.0, 10.0]) {
+        let lean = composites.femininity.clamp(-1.0, 1.0);
+        let (long, short) = (1.0 + lean.max(0.0), 1.0 + (-lean).max(0.0));
+        match rolls.pick(
+            "hair.style",
+            &[35.0 * short, 20.0 * long, 20.0 * long, 15.0 * long, 10.0],
+        ) {
             1 => ScalpStyle::Bob {
                 fringe: rolls.range("hair.fringe", 0.0, 1.0),
             },
@@ -987,8 +1055,8 @@ fn reroll_hair(hair: &mut HairRecord, rolls: &Rolls, composites: &crate::Composi
         }
     };
     hair.scalp.cut.length = rolls.range("hair.length", 0.0, 1.0);
-    hair.scalp.cut.density = rolls.range("hair.density", 0.35, 1.0);
-    hair.scalp.cut.thickness = rolls.range("hair.thickness", 0.2, 0.9);
+    hair.scalp.cut.density = rolls.shape("hair.density", 0.68, 0.13, (0.35, 1.0));
+    hair.scalp.cut.thickness = rolls.shape("hair.thickness", 0.55, 0.14, (0.2, 0.9));
     hair.scalp.cut.droop = rolls.range("hair.droop", 0.3, 0.9);
     hair.scalp.roots = roots;
     hair.scalp.tips = tips;
@@ -1012,8 +1080,8 @@ fn reroll_hair(hair: &mut HairRecord, rolls: &Rolls, composites: &crate::Composi
     } else {
         crate::hair::BrowStyle::Natural
     };
-    hair.brows.cut.density = rolls.range("brow.density", 0.5, 1.0);
-    hair.brows.cut.thickness = rolls.range("brow.thickness", 0.3, 1.0);
+    hair.brows.cut.density = rolls.shape("brow.density", 0.75, 0.10, (0.5, 1.0));
+    hair.brows.cut.thickness = rolls.shape("brow.thickness", 0.65, 0.14, (0.3, 1.0));
     hair.brows.cut.length = rolls.range("brow.length", 0.4, 0.9);
     hair.brows.roots = roots;
     hair.brows.tips = roots;
@@ -1027,20 +1095,24 @@ fn reroll_hair(hair: &mut HairRecord, rolls: &Rolls, composites: &crate::Composi
     // draw from separate streams, so changing how full a beard is cannot change
     // who has one.
     //
-    // **A quarter at neutral, and it was a twentieth** (#203, owner call). #202
-    // wrote `0.05 + 0.45 * masculinity.max(0)`, which is the coupling this
-    // issue's brief asked for at a fifth of the rate it asked for — the brief
-    // says "as the stubble coin was", and that coin was a flat 25%. Re-centred
-    // rather than replaced: the coupling is what makes it a body axis, and the
-    // level is what decides whether a rolled population has any facial hair in
-    // it at all. At a twentieth, and with the fullness guard below taking
-    // another quarter off, a beard turned up on one neutral body in
-    // twenty-seven.
+    // **One in a hundred on every body from neutral to feminine, and 60% at
+    // the masculine reference** (#486, Overlands #1953, owner call: "a
+    // feminine avatar should only have a very small probability for having
+    // facial hair"). The rate rises along a smoothstep of masculinity, so it
+    // leaves the floor and arrives at the masculine rate without a corner.
     //
-    // Symmetric now, so a feminine frame is near zero rather than flat at the
-    // neutral rate — which is what the old `max(0.0)` was silently doing to the
-    // whole lower half of the axis.
-    let bearded = (0.25 + 0.35 * masculinity).clamp(0.0, 1.0);
+    // This supersedes #203's "a quarter at neutral" (owner call, generation 5),
+    // `0.25 + 0.35 * masculinity`: with the frame axis one bell on the middle
+    // that put a beard on a quarter of the commonest body and, nonzero up to a
+    // femininity of 0.71, on a visible share of feminine ones. #203 itself
+    // replaced #202's `0.05 + 0.45 * masculinity.max(0)`, which had left the
+    // whole feminine half of the axis at the neutral rate. The masculine end
+    // is where both left it, at 60%.
+    let rise = {
+        let t = masculinity.clamp(0.0, 1.0);
+        t * t * (3.0 - 2.0 * t)
+    };
+    let bearded = 0.01 + 0.59 * rise;
     let grows = rolls.chance("beard.grows", f64::from(bearded));
     // **Age's claim on facial hair is the FULLNESS, not the presence** — a
     // beard fills out through the twenties and a nineteen-year-old's is patchy
@@ -1055,8 +1127,8 @@ fn reroll_hair(hair: &mut HairRecord, rolls: &Rolls, composites: &crate::Composi
     // an eighteen-year-old and a thirty-year-old grow the same beard.
     let grown_in = ((f32::from(u16::try_from(composites.age).unwrap_or(u16::MAX)) - 18.0) / 12.0)
         .clamp(0.0, 1.0);
-    let full = rolls.range("beard.full", 0.0, 1.0) * (0.55 + 0.45 * grown_in);
-    let coarse = rolls.range("beard.thickness", 0.3, 0.9);
+    let full = rolls.shape("beard.full", 0.5, 0.22, (0.0, 1.0)) * (0.55 + 0.45 * grown_in);
+    let coarse = rolls.shape("beard.thickness", 0.6, 0.12, (0.3, 0.9));
     for cut in [
         &mut hair.moustache.cut,
         &mut hair.chin.cut,
@@ -1066,9 +1138,18 @@ fn reroll_hair(hair: &mut HairRecord, rolls: &Rolls, composites: &crate::Composi
         cut.length = full;
         cut.thickness = coarse;
     }
+    // **The shadow of a shaved jaw, painted only where a beard could be**
+    // (#486, Overlands #1953, owner call). A face whose coin grew a beard
+    // carries its paint as before - painted even where the fullness guard
+    // grows nothing, since that is what a shaved jaw is. A face that grows
+    // none is painted only as far as it is masculine, along the same
+    // smoothstep the coin rises on: full stubble at the masculine reference,
+    // none from neutral to feminine. Through generation 11 every face under a
+    // femininity of 0.4 was painted, bearded or not, which put a stubble
+    // shadow on bodies the owner wants clean-faced.
+    let shadow = if grows { 1.0 } else { rise };
     let beard = crate::hair::Paint {
-        // Painted even where nothing is grown: that is what a shaved jaw is.
-        density: (0.25 + 0.75 * full) * f32::from(u8::from(masculinity > -0.4)),
+        density: (0.25 + 0.75 * full) * shadow,
         colour: roots,
     };
     for tress in [
@@ -1176,7 +1257,10 @@ fn rolled_colour(rolls: &Rolls, ageing: f32) -> ([f32; 3], [f32; 3]) {
     // It is still ZERO below `plan::AGE_PIVOT`, because the root of nothing is
     // nothing — the coupling is real rather than merely correlated, and nobody
     // rolls grey at twenty-two.
-    let grey = (ageing.sqrt() * rolls.range("hair.greying", 0.15, 1.6)).clamp(0.0, 1.0);
+    //
+    // **The rate is a bell since generation 12** (#486, Overlands #1953): see
+    // [`greying_rate`].
+    let grey = (ageing.sqrt() * greying_rate(rolls)).clamp(0.0, 1.0);
     let (roots, tips) = (
         crate::hair::style::greyed(roots, grey),
         crate::hair::style::greyed(tips, grey),
@@ -1194,6 +1278,22 @@ fn rolled_colour(rolls: &Rolls, ageing: f32) -> ([f32; 3], [f32; 3]) {
         );
     }
     (roots, tips)
+}
+
+/// How fast a rolled head greys: the factor on the root of the age ramp that
+/// `rolled_colour` turns into grey.
+///
+/// **A body trait, so a bell** (#486, Overlands #1953, owner call): most heads
+/// grey at about the typical rate and a few run fast or slow, where through
+/// generation 11 the rate was uniform over the same range. Centred at 0.85,
+/// sigma 0.30, about a fifth of the range; the range's own middle is 0.875,
+/// and the owner's figure is the rounder one below it. The wildcard draws
+/// uniformly over the old 0.15..1.6, so a head that is white at sixty or barely
+/// salted at eighty is still a roll away.
+///
+/// Its own function so a test can read the draw that a colour hides.
+fn greying_rate(rolls: &Rolls) -> f32 {
+    rolls.shape("hair.greying", 0.85, 0.30, (0.15, 1.6))
 }
 
 /// What a bearded face grows, as a coherent set rather than three coins.
@@ -1260,14 +1360,37 @@ fn rolled_beard(
     }
 }
 
-fn reroll_skin(skin: &mut SkinParams, rolls: &Rolls) {
+/// Draws a fresh complexion: tone, blush and freckles.
+///
+/// Every body draws one - a beast keeps the complexion its seed draws, the
+/// same tone a person on that seed would have - but only a body that paints
+/// a skin from it reads it: `painted`, a human trunk's. A beast wears a coat
+/// (#368) and a winged body a coat or plumage (#423), and nothing they build
+/// reads this block.
+fn reroll_skin(skin: &mut SkinParams, rolls: &Rolls, painted: bool) {
     // Complexion stays UNIFORM while the shape axes went Gaussian (#160, an
     // owner call worth restating): a Gaussian centred on the default would
     // make every complexion far from it a "rare extreme", and a skin tone is
     // not an extreme of anything.
     skin.melanin = rolls.range("skin.melanin", 0.0, 1.0);
     skin.undertone = rolls.range("skin.undertone", -1.0, 1.0);
-    skin.blush = rolls.range("skin.blush", 0.15, 0.8);
+    // **Blush is not a complexion and is a bell on a person** (#486,
+    // Overlands #1953, owner call): how readily a face flushes is a trait with
+    // a typical value, where melanin and undertone above are the tone itself
+    // and stay uniform for #160's reason. Centred at 0.45, sigma 0.13 (a fifth
+    // of the range), just under the range's middle of 0.475: the owner's
+    // rounder figure. The wildcard draws uniformly over the old 0.15..0.8.
+    //
+    // **A body that paints no skin keeps the old uniform draw**, on the same
+    // stream: #486 changes a person's roll, and a beast's or a winged body's
+    // blush is a number nothing it builds reads. Drawn as a bell there too, it
+    // would build every such body to the byte and still change every one of
+    // their stored records and share codes for nothing anybody can see.
+    skin.blush = if painted {
+        rolls.shape("skin.blush", 0.45, 0.13, (0.15, 0.8))
+    } else {
+        rolls.range("skin.blush", 0.15, 0.8)
+    };
     // Most people have none, so it stays off more often than not. The coin and
     // the amount draw from separate streams, so changing how many freckles a
     // freckled face has cannot change which faces have any.
@@ -1398,8 +1521,13 @@ mod tests {
         );
         assert_eq!(
             drawn,
-            "femininity 1.340000 mass -0.298000 fat 0.212000 age 30 height 1.482000 melanin 0.933000"
+            "femininity -1.325000 mass -0.298000 fat 0.079000 age 30 height 1.675000 melanin 0.933000"
         );
+        // Re-pinned at generation 12 (#486): the frame axis is two bells on the
+        // references, so seed 42's frame went from 1.340 to -1.325; its body fat
+        // follows the frame (0.212 -> 0.079) and its stature the frame and the
+        // measured means (1.482 -> 1.675). Mass, age and melanin draw as they
+        // did and hold to the digit.
     }
 
     #[test]
@@ -1538,9 +1666,9 @@ mod tests {
     /// One rolled population, at a frame and an age the caller names.
     ///
     /// **A prior is a statement about a POPULATION and cannot be tested on a
-    /// body.** Every claim the priors make — dark-dominant, greying with
-    /// age, a quarter bearded at neutral — is false of some individual seed and
-    /// has to be, or it would not be a distribution. So the tests below roll
+    /// body.** Every claim the priors make - dark-dominant, greying with
+    /// age, one in a hundred bearded from neutral to feminine - is false of
+    /// some individual seed and has to be, or it would not be a distribution. So the tests below roll
     /// several hundred and count.
     ///
     /// Six hundred is enough that a rate of a quarter lands within about three
@@ -1878,14 +2006,14 @@ mod tests {
     }
 
     #[test]
-    fn facial_hair_follows_the_frame_axis_and_is_symmetric_about_it() {
-        // **Both halves of #203's owner call.** The rate moved from a twentieth
-        // at neutral to a quarter, and the coupling became symmetric — #202's
-        // `masculinity.max(0.0)` gave the whole feminine half of the axis the
-        // same rate as a neutral frame, so a fully feminine body was as likely
-        // to grow a beard as an androgynous one.
+    fn facial_hair_is_rare_on_feminine_bodies_and_rises_to_the_masculine_rate() {
+        // **#486's owner call** (Overlands #1953: "a feminine avatar should only
+        // have a very small probability for having facial hair"), superseding
+        // #203's quarter at neutral: one in a hundred from neutral to feminine,
+        // rising along a smoothstep to 60% at the masculine reference. The
+        // fullness guard takes about an eighth off the coin at thirty-five.
         let bearded = |femininity: f32| {
-            population(400, femininity, 35)
+            population(800, femininity, 35)
                 .iter()
                 .filter(|record| {
                     record.hair.chin.style.grows()
@@ -1894,22 +2022,282 @@ mod tests {
                 })
                 .count()
         };
-        let (feminine, neutral, masculine) = (bearded(1.0), bearded(0.0), bearded(-1.0));
+        let (feminine, neutral, between, masculine) =
+            (bearded(1.0), bearded(0.0), bearded(-0.5), bearded(-1.0));
         assert!(
-            feminine < neutral / 3,
-            "a feminine frame grew {feminine} beards in 400 against a neutral \
-             frame's {neutral}"
+            feminine <= 16 && neutral <= 16,
+            "{feminine} feminine and {neutral} neutral bodies of 800 grew facial hair, \
+             against one in a hundred"
         );
         assert!(
-            (50..110).contains(&neutral),
-            "{neutral} of 400 neutral bodies grew facial hair; the gate is a \
-             quarter and the fullness guard takes about another quarter off"
+            (300..=480).contains(&masculine),
+            "{masculine} of 800 masculine bodies grew facial hair, against 60% less the \
+             fullness guard"
+        );
+        // Halfway along the smoothstep the coin is 0.305: between the two, and
+        // well clear of either.
+        assert!(
+            neutral + 100 < between && between + 100 < masculine,
+            "neutral {neutral}, halfway {between}, masculine {masculine} of 800"
+        );
+    }
+
+    /// Several thousand persons rolled whole, as a host rolls them: the
+    /// population #486's priors describe, every composite drawn.
+    fn rolled_persons(count: i64) -> Vec<AvatarRecord> {
+        (0..count)
+            .map(|seed| AvatarRecord::rolled("Rolled", Archetype::default(), seed))
+            .collect()
+    }
+
+    /// The mean and standard deviation of some values.
+    fn spread(values: &[f32]) -> (f32, f32) {
+        let mean = values.iter().sum::<f32>() / values.len() as f32;
+        let variance = values.iter().map(|v| (v - mean).powi(2)).sum::<f32>() / values.len() as f32;
+        (mean, variance.sqrt())
+    }
+
+    #[test]
+    fn a_rolled_population_is_two_frames_at_their_measured_statures() {
+        // #486 (Overlands #1953, owner calls): the frame axis is two bells of
+        // sigma 0.4 on the references, and stature centres on the measured
+        // means with each sex's measured spread. Read on a population rolled
+        // whole, since that is what a host shows.
+        let persons = rolled_persons(4_000);
+        let frames: Vec<f32> = persons.iter().map(|p| p.composites.femininity).collect();
+        let share = |keep: &dyn Fn(f32) -> bool| {
+            frames.iter().filter(|f| keep(**f)).count() as f32 / frames.len() as f32
+        };
+        let middle = share(&|f| f.abs() < 0.3);
+        let (masculine, feminine) = (share(&|f| f < 0.0), share(&|f| f > 0.0));
+        println!("frame: middle {middle:.3}, masculine {masculine:.3}, feminine {feminine:.3}");
+        assert!((0.02..0.07).contains(&middle), "{middle} inside |f| < 0.3");
+        assert!((0.45..0.55).contains(&masculine), "{masculine} masculine");
+        assert!((0.45..0.55).contains(&feminine), "{feminine} feminine");
+
+        // Each mode's core, so the frame's wildcard does not drown it, and
+        // stature's own wildcard trimmed at 0.3 m (four sigma) from the
+        // measured mean. The core's deviation is under the whole mode's 7.6
+        // and 6.4 cm, as the frame carries less of the spread inside the core
+        // than across its whole bell. A Monte Carlo of this exact draw (the
+        // bimodal frame and its wildcard, the centre on `between`, the clamped
+        // sigma, the trim) puts it at 7.31 and 6.17 cm, the uniform tail inside
+        // the trim adding about 1 and 2 mm of that. Drawn at the whole-mode
+        // sigmas with the frame's share not subtracted, the core would read
+        // 7.82 and 6.79 cm, which the 2.5 mm window refuses (#486's critic).
+        for (side, mean, deviation) in [(-1.0f32, 1.757f32, 0.0731f32), (1.0, 1.618, 0.0617)] {
+            let heights: Vec<f32> = persons
+                .iter()
+                .filter(|p| (p.composites.femininity - side).abs() < 0.4)
+                .map(|p| match &p.archetype {
+                    Archetype::Humanoid(params) => params.height,
+                    _ => unreachable!("a person"),
+                })
+                .filter(|h| (h - mean).abs() < 0.3)
+                .collect();
+            let (got, sd) = spread(&heights);
+            println!(
+                "stature at {side:+}: mean {got:.4} m, sd {sd:.4} m over {}",
+                heights.len()
+            );
+            assert!(
+                heights.len() > 1_000,
+                "{} in the core at {side}",
+                heights.len()
+            );
+            assert!(
+                (got - mean).abs() < 0.01,
+                "mean {got} at {side}, against {mean}"
+            );
+            assert!(
+                (sd - deviation).abs() < 0.0025,
+                "sd {sd} at {side}, against {deviation}"
+            );
+        }
+    }
+
+    #[test]
+    fn a_rolled_population_grows_facial_hair_on_masculine_bodies() {
+        // #486: among rolled bodies from neutral to feminine a grown beard is
+        // about one in a hundred, and a face whose coin grew none carries no
+        // beard paint; among the masculine core, a third to a half are bearded.
+        let persons = rolled_persons(4_000);
+        let grows = |record: &AvatarRecord| {
+            record.hair.chin.style.grows()
+                || record.hair.flanks.style.grows()
+                || record.hair.moustache.style.grows()
+        };
+        let feminine: Vec<(i64, &AvatarRecord)> = (0..)
+            .zip(&persons)
+            .filter(|(_, p)| p.composites.femininity >= 0.0)
+            .collect();
+        let bearded = feminine.iter().filter(|(_, p)| grows(p)).count();
+        let share = bearded as f32 / feminine.len() as f32;
+        // The coin is `0.01 + 0.59 * smoothstep(masculinity)`, exactly 0.01 at
+        // every femininity from zero up, so the coin is replayed here.
+        let mut painted_without = 0;
+        for (seed, record) in &feminine {
+            let coin = Rolls::new(*seed).chance("beard.grows", f64::from(0.01f32));
+            let hair = &record.hair;
+            let paint = hair
+                .moustache
+                .skin
+                .density
+                .max(hair.chin.skin.density)
+                .max(hair.flanks.skin.density);
+            if !coin && paint > 0.0 {
+                painted_without += 1;
+            }
+        }
+        let core: Vec<&AvatarRecord> = persons
+            .iter()
+            .filter(|p| (p.composites.femininity + 1.0).abs() < 0.4)
+            .collect();
+        let masculine = core.iter().filter(|p| grows(p)).count() as f32 / core.len() as f32;
+        println!(
+            "beards: {share:.4} of {} from neutral to feminine, {masculine:.3} of {} in the \
+             masculine core; {painted_without} painted without the coin",
+            feminine.len(),
+            core.len()
+        );
+        assert!(share <= 0.02, "{share} of feminine bodies grew a beard");
+        assert_eq!(
+            painted_without, 0,
+            "a face that grows no beard carries its paint"
         );
         assert!(
-            masculine > neutral * 2,
-            "a masculine frame grew {masculine} beards against a neutral \
-             frame's {neutral}"
+            (0.30..0.60).contains(&masculine),
+            "{masculine} of the masculine core bearded"
         );
+    }
+
+    #[test]
+    fn a_haircut_leans_gently_on_the_frame_axis() {
+        // #486, superseding #203's uncoupled table: Bob, Long and TiedBack
+        // weigh double at the feminine reference, Crop at the masculine one,
+        // and a neutral body draws the old table. Read among card picks, since
+        // the helmet coin does not lean. Expected, of card picks: at the
+        // feminine reference 71% long and 23% crop, at the masculine one 52%
+        // crop and 41% long, at neutral 35% and 55%.
+        let shares = |femininity: f32| {
+            let (mut crop, mut long, mut cards) = (0usize, 0usize, 0usize);
+            for record in population(3_000, femininity, 30) {
+                match record.hair.scalp.style {
+                    ScalpStyle::Crop => crop += 1,
+                    ScalpStyle::Bob { .. }
+                    | ScalpStyle::Long { .. }
+                    | ScalpStyle::TiedBack { .. } => long += 1,
+                    ScalpStyle::Curly { .. } => {}
+                    _ => continue,
+                }
+                cards += 1;
+            }
+            (crop as f32 / cards as f32, long as f32 / cards as f32)
+        };
+        for (femininity, crop, long) in [
+            (1.0f32, 0.226f32, 0.710f32),
+            (-1.0, 0.519, 0.407),
+            (0.0, 0.35, 0.55),
+        ] {
+            let (got_crop, got_long) = shares(femininity);
+            println!("haircut at {femininity:+}: crop {got_crop:.3}, long {got_long:.3}");
+            assert!(
+                (got_crop - crop).abs() < 0.04 && (got_long - long).abs() < 0.04,
+                "at {femininity}: crop {got_crop}, long {got_long}, against {crop} and {long}"
+            );
+        }
+    }
+
+    #[test]
+    fn a_body_trait_is_a_bell_on_its_old_range() {
+        // #486: the hair, brow and beard amounts a body grows, blush and the
+        // rate of greying are bells on their old ranges' middles with a fifth of
+        // the range as sigma, where they were uniform. A uniform draw puts half
+        // its values in the middle half of its range; this puts about 78%
+        // there, and the bell itself still reaches both outer tenths, each of
+        // which starts two sigma out. `shape`'s wildcard is not what this
+        // checks: `a_shape_draw_is_what_it_always_was` pins it.
+        let persons = rolled_persons(4_000);
+        let traits: [(&str, (f32, f32), Vec<f32>); 8] = [
+            (
+                "hair.density",
+                (0.35, 1.0),
+                persons.iter().map(|p| p.hair.scalp.cut.density).collect(),
+            ),
+            (
+                "hair.thickness",
+                (0.2, 0.9),
+                persons.iter().map(|p| p.hair.scalp.cut.thickness).collect(),
+            ),
+            (
+                "brow.density",
+                (0.5, 1.0),
+                persons.iter().map(|p| p.hair.brows.cut.density).collect(),
+            ),
+            (
+                "brow.thickness",
+                (0.3, 1.0),
+                persons.iter().map(|p| p.hair.brows.cut.thickness).collect(),
+            ),
+            // Before its grown-in factor, which is one from thirty.
+            (
+                "beard.full",
+                (0.0, 1.0),
+                persons
+                    .iter()
+                    .filter(|p| p.composites.age >= 30)
+                    .map(|p| p.hair.chin.cut.density)
+                    .collect(),
+            ),
+            (
+                "beard.thickness",
+                (0.3, 0.9),
+                persons.iter().map(|p| p.hair.chin.cut.thickness).collect(),
+            ),
+            (
+                "skin.blush",
+                (0.15, 0.8),
+                persons.iter().map(|p| p.skin.blush).collect(),
+            ),
+            // A colour hides the rate it was greyed at, so read the draw.
+            (
+                "hair.greying",
+                (0.15, 1.6),
+                (0..4_000)
+                    .map(|seed| greying_rate(&Rolls::new(seed)))
+                    .collect(),
+            ),
+        ];
+        for (name, (low, high), values) in traits {
+            let width = high - low;
+            let inside = |from: f32, to: f32| {
+                values.iter().filter(|v| (from..=to).contains(*v)).count() as f32
+                    / values.len() as f32
+            };
+            let middle = inside(low + 0.25 * width, high - 0.25 * width);
+            let (bottom, top) = (
+                inside(low, low + 0.1 * width),
+                inside(high - 0.1 * width, high),
+            );
+            let (mean, sd) = spread(&values);
+            println!(
+                "{name}: mean {mean:.3}, sd {sd:.3}, middle half {middle:.3}, outer tenths \
+                 {bottom:.3} and {top:.3}, over {}",
+                values.len()
+            );
+            assert!(
+                middle > 0.7,
+                "{name}: {middle} in the middle half of its range"
+            );
+            assert!(
+                bottom > 0.0 && top > 0.0,
+                "{name}: an outer tenth is never drawn"
+            );
+            assert!(
+                values.iter().all(|v| (low..=high).contains(v)),
+                "{name}: a draw left the old range"
+            );
+        }
     }
 
     #[test]
@@ -2296,7 +2684,7 @@ mod tests {
         // fails, every stored seed now names a different avatar, and
         // GENERATOR_VERSION has to move with it.
         assert_eq!(
-            GENERATOR_VERSION, 11,
+            GENERATOR_VERSION, 12,
             "bump the table below with the version"
         );
         let quantised = |seed: i64| {
@@ -2354,9 +2742,18 @@ mod tests {
         //
         // Generation 2 (#160) was the exploration distributions; generation 1
         // the first numbered draw.
-        assert_eq!(quantised(1), (1799, -13, 594, 238));
-        assert_eq!(quantised(42), (1482, 49, 933, 973));
-        assert_eq!(quantised(-7), (1902, 86, 513, 903));
+        //
+        // Generation 12 (#486) is a person's roll drawn as a population of
+        // people, and the table moves only in the column it should: `height`,
+        // 1799 -> 1804, 1482 -> 1675 and 1902 -> 1783, because stature reads
+        // the frame axis - now two bells on the references - and centres on
+        // the measured means with each sex's measured spread. Shoulders,
+        // melanin and hair length hold to the digit on all three seeds: the
+        // shoulders are an offset whose own draw did not change, the tone
+        // stays uniform (#160), and `hair.length` is still a uniform draw.
+        assert_eq!(quantised(1), (1804, -13, 594, 238));
+        assert_eq!(quantised(42), (1675, 49, 933, 973));
+        assert_eq!(quantised(-7), (1783, 86, 513, 903));
     }
 
     #[test]
@@ -2539,7 +2936,22 @@ mod tests {
             beast.eyes.inner, person.eyes.inner,
             "a beast's iris is its family's"
         );
-        assert_eq!(beast.skin, person.skin, "the complexion is every body's");
+        // The tone is every body's. Blush is too, but drawn as a bell only on
+        // a body that paints a skin (#486): a beast keeps the uniform draw it
+        // always made, on the same stream, so the two differ there alone.
+        let tone = |skin: &SkinParams| (skin.melanin, skin.undertone, skin.freckles);
+        assert_eq!(
+            tone(&beast.skin),
+            tone(&person.skin),
+            "the complexion is every body's"
+        );
+        let mut uniform = beast.skin;
+        uniform.blush = Rolls::new(11).range("skin.blush", 0.15, 0.8);
+        uniform.sanitize();
+        assert_eq!(
+            beast.skin.blush, uniform.blush,
+            "a beast's blush is the uniform draw it always was"
+        );
         assert_ne!(person.face, blank.face);
         assert_ne!(person.hair, blank.hair);
     }
@@ -2701,7 +3113,7 @@ mod tests {
         // this fails, every stored quadruped seed now names a different
         // animal, and GENERATOR_VERSION has to move with it.
         assert_eq!(
-            GENERATOR_VERSION, 11,
+            GENERATOR_VERSION, 12,
             "bump the table below with the version"
         );
         let rolled = |seed: i64| {
