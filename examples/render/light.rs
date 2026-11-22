@@ -274,6 +274,27 @@ pub fn inspect(
     image
 }
 
+/// Draws the triangle edges [`GBuffer::wire`] holds over a finished picture,
+/// for `--pass wire` (#308).
+///
+/// **Over the lit picture, not instead of it**, because the question the pass
+/// is for is whether density outruns curvature, and curvature is what the
+/// shading shows: a wire over flat grey says how many triangles there are and
+/// nothing about whether the surface needed them.
+///
+/// One dark ink over clay (see [`crate::scene::Item::wire`]). Where cells are
+/// finer than the line the surface goes solid with ink, which is itself the
+/// reading: that patch spends more triangles than the view has pixels for.
+pub fn wire(image: &mut Image, buffer: &GBuffer) {
+    const INK: Vec3 = Vec3::new(0.004, 0.006, 0.02);
+    let Some(wire) = &buffer.wire else {
+        return;
+    };
+    for (colour, &cover) in image.colour.iter_mut().zip(wire) {
+        *colour = colour.lerp(INK, cover * 0.85);
+    }
+}
+
 /// Undoes the sRGB encoding that writing applies, so a buffer shows raw.
 fn to_view(value: Vec3) -> Vec3 {
     Vec3::new(

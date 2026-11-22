@@ -9,37 +9,52 @@ budget figures have a history of being true on the day and wrong within a week.
 
 | constant | value | where |
 | --- | --- | --- |
-| `TRIANGLE_TARGET` | 33,500 | `tests/budget.rs` - the number the engine is judged by (WebGL2 tier) |
-| `TRIANGLE_CEILING` | 32,600 | `tests/budget.rs` - the ratchet: today's high-water mark (32,452 at generation 12, #486; 32,012 before it, 32,056 under the libm nudge), not a goal |
+| `TRIANGLE_TARGET` | 25,000 | `tests/budget.rs` - the number a person is judged by (WebGL2 tier); 33,500 until milestone #16 banked Round B's savings (#308) |
+| `BEAST_TRIANGLE_TARGET` | 29,800 | `tests/budget.rs` - a beast's own since milestone #16: the dearest bald beast with fur's 9,000 ceiling on it (29,452 swept, 29,608 over 300 rolls) and a cushion |
+| `TRIANGLE_CEILING` | 23,600 | `tests/budget.rs` - the ratchet: today's high-water mark (23,428 at milestone #16; 32,452 at generation 12, #486), not a goal |
 | `MESH_TARGET` / `MESH_CEILING` | 4 draws | `tests/budget.rs` - skin, hair, cloth, eye; each justified by a material the others cannot provide |
-| `hair::clump::MAX_TRIANGLES` | 3,300 | `src/hair/clump/mod.rs` - what is left for hair once everything else is paid for, measured at the *dearest* body, not the default, and re-measured by a test rather than quoted; it also has a *floor*, the dearest head a re-roll can grow, which the tier must never trim |
+| `hair::clump::MAX_TRIANGLES` | 3,300 | `src/hair/clump/mod.rs` - what is left for hair once everything else is paid for, measured at the *dearest* body, not the default, and re-measured by a test rather than quoted; it also has a *floor*, the dearest head a re-roll can grow, which the tier must never trim; and since the tier holds every legal head of hair to it, the product corner is the dearest bald body plus it (#489) |
 
-The figures as reconciled at #353 (2026-11-06) - stale the moment anything
+The figures as re-measured at milestone #16's Round B (2026-11-22: #189 with
+the lip band halved too, #493, #494 and #498 in), with the constants above
+re-based on them and #489's readings in brackets - stale the moment anything
 lands, re-run:
 
-- default body: **28,380**
-- dearest sweep corner (built, rolled hair): **32,012** (seed 2 long broad,
-  lean thin tall at frame 0); the six seeds alone reach 29,988 (seed 1 long
-  broad). At generation 12 (#486) the same corner reads **32,452**: seed 2
-  re-rolled masculine, and its own hair is now a TiedBack scalp and a full
-  Chevron + Full + FullConnect beard (it was a Curly scalp and no beard)
-- dearest bald body: **30,142** (the same body) - leaving **3,358** under the
-  target, which is what the hair ceiling is the leftover of
-- greedy-hair body: **30,250**
-- dearest *product* corner - greediest legal hair on the dearest body:
-  **33,440** (the same body), 60 under the target
-- dearest legal hair, untiered: the test prints seed 42 long broad's, **3,390**
-- the hair ceiling's floor: a helmet on a rolled face, **3,276** (seed 102 as
-  rolled, a bun, #351); at generation 12 (#486), over 300 rolled seeds with
-  every catalogue style on each seed's own face, **3,276** again (seed 114, a
-  bun), where generation 11's tree reads 3,250 (seed 102). No rolled head of
-  either generation is thinned, and the dearest own rolled hair fell from
-  3,126 to 2,792 (mean 1,438 to 1,452)
-- the far hair tier (`AvatarConfig::far_hair`, #350): at most **660** on a
-  rolled face; never more than the near tier it stands for, and not counted
-  against `MAX_TRIANGLES`
+- default body: **20,878** [28,348]
+- dearest sweep corner (built, rolled hair): **23,428** (seed 2 as rolled,
+  lean thin tall at frame 0) [32,452 on the same seed's long broad head, which
+  the face's refinement cost most and which gave most back]
+- dearest bald body: **21,124** (the same body) [30,126] - leaving **3,876**
+  under the target, which is what the hair ceiling is the leftover of
+- greedy-hair body: **22,706** [30,216], the default body in the dearest hair
+  derived on its own head (a bob with no fringe at droop 0, Natural brows, a
+  Handlebar, a Full chin and FullConnect flanks)
+- dearest *product* corner: **24,424**, 576 under the target - the dearest
+  bald body plus the hair ceiling (21,124 + 3,300), which the tier holds every
+  legal head of hair to within `TIER_SLACK` (#489) [33,426]. Built on that
+  body, the dearest hair derived there asks **4,486** untiered [4,738], is
+  tiered to 3,264 and reads 24,388 (a crop at droop 0.5, Natural brows, a
+  Handlebar, a Full chin and FullConnect flanks); the most of a head the tier
+  cannot thin, every region in its solid style, is **2,934** (seed 9 long
+  broad, lean thin tall at frame 0), so the tier never has to
+- the hair ceiling's floor: a helmet on a rolled face, **3,276** (seed 114 as
+  rolled, a bun, at generation 12, #486; seed 102 at #351). Not re-measured in
+  Round B: it is measured at each seed's own cut on 300 rolled faces
+- the far hair tier (`AvatarConfig::far_hair`, #350): at most **812** over the
+  rail's three heads (a tied-back tail on seed 7 as rolled, at its own cut);
+  never more than the near tier it stands for, and not counted against
+  `MAX_TRIANGLES`
 - the dearest beast: **28,960** built (a horse, every axis low at 0.05 m),
-  **20,452** bald (seed 18)
+  **20,452** bald (seed 18), unchanged
+
+How Round B got there, on the default body and the dearest corner: #189's
+variant C 22,862 and 25,498; #493 22,130 and 24,710; the lip band halved too
+(variant A, the owner's pick of 2026-11-22) 20,878 and 23,428; #494 and #498
+move no triangle. Beasts and winged bodies did not change. The owner's call
+on how to spend it (#308, 2026-11-22): bank it, keep the hair ceiling at
+3,300, and lower the target into the window the leftover test allows - the
+dearest bald body plus 3,333 (the product bound, with `TIER_SLACK`) to plus
+4,125 (the 80 percent line), 24,457 to 25,249 - and give beasts their own.
 
 **What the sweeps visit** (#353). Every person sweep in `tests/budget.rs` -
 the ratchet, the leftover and the product - builds one list, `swept`: six
@@ -78,33 +93,38 @@ fill reached the head are cut differently; of the sixteen people
 **What they do not visit, printed by `probe_the_rolled_population` so it stays
 visible** (owner's call, 2026-11-06):
 
-- the rolled population, bald: as rolled p50 27,074 / p90 28,002 / p99 29,358,
-  dearest 29,772 (seed 56); long broad 28,184 / 29,124 / 29,772, dearest
-  29,872 (seed 96) - under the swept corner
-- the head envelope's ends past the (1, 1) pin: at (2, 2) p99 30,592, dearest
-  31,436; at (3, 3) p99 31,370, dearest 31,954 (both seed 96). A roll reaches
-  about +-2.2 and a record +-3
-- the heavy, fat, feminine, tall corner (mass +2, body fat at the top of its
-  range): the swelled chest's own refinement pass and the cloth cut over it,
-  31,578 bald at seed 7 long broad, frame +2, on the six seeds - past the
-  population's dearest heavy body (seed 96, 29,872), and pinned it would leave
-  hair less than its floor under the target; over eighty seeds with each
-  seed's own hair, below
+Re-measured at milestone #16's Round B (2026-11-22), with #489's readings
+(generation 12, 2026-11-21) in brackets:
+
+- the rolled population, bald: as rolled p50 19,342 / p90 20,256 / p99 20,706,
+  dearest 20,950 (seed 207) [29,662]; long broad 20,270 / 20,726 / 21,212,
+  dearest **22,084** (seed 207) [30,892], **960 past the swept corner** [766].
+  Seed 207 is the heavy, fat, feminine tail reached by a natural roll (#491:
+  femininity +1.05, mass +1.47, body fat 0.477), and the whole of its excess
+  is the top over its swelled chest's refinement, which the top's closed
+  shell drew twice until #493 thinned the inner wall. With the hair ceiling
+  on it, it would read 25,384, 384 past the target
+- the head envelope's ends past the (1, 1) pin: at (2, 2) p99 21,712, dearest
+  22,364 (seed 207) [32,232]; at (3, 3) p99 22,042, dearest 22,440 (seed 264)
+  [32,476]. A roll reaches about +-2.2 and a record +-3
 - beasts per family, built p99 23,580 / 23,986 / 23,418 (dog, cat, horse),
   dearest 24,186; bald dearest 20,608 (cat seed 289), 156 past the sweep's,
-  which leaves fur's 9,000 inside the target with 2,592 to spare
-- **the swept corners over eighty seeds rather than six**: the lean, thin,
-  tall corners at both of the product's heads, bald, p50 27,948 / p90 29,068 /
-  p99 29,804 of 800, dearest **30,142** (seed 2 long broad, frame 0) - the
-  body the twenty-seed sweep pins, so the eighty agree with it - and the
-  greediest legal hair on it **33,440**
+  29,608 with fur's 9,000 on it: inside the beasts' own target with 192 to
+  spare. No beast changed in Round B
+- **the swept corners over eighty seeds rather than twenty**: the lean, thin,
+  tall corners at both of the product's heads, bald, p50 20,130 / p90 20,700 /
+  p99 21,006 of 800, dearest **21,172** (seed 31 long broad, frame +2), 48
+  past the twenty-seed sweep's [30,126, the body the sweep pins]; bounded at
+  **24,472** with the hair ceiling on it, inside the target with the slack,
+  and the dearest hair derived on each of the eight dearest builds at most
+  24,434 (the same body)
 - **the heavy, fat, feminine, tall corner, a documented tail** (owner's call,
   2026-11-06: reported, not pinned). With each seed's OWN rolled hair over
-  seeds 0-79: p50 31,888 / p90 32,982 / p99 34,160 of 320, dearest **34,664**
-  (seed 2 long broad, frame +1), **10 of the 320 past the 33,500 target**;
-  the probe prints that count each time it runs. Pinned, it would need a target past 34,664 before any
-  hair is chosen, and the leftover under any target near this one would be
-  less than the hair ceiling's floor.
+  seeds 0-79: p50 22,806 / p90 23,686 / p99 24,824 of 320, dearest **25,150**
+  (seed 64 long broad, frame +1), **2 of the 320 past the 25,000 target** [11
+  past 33,500; 10 at #353]; the probe prints that count each time it runs.
+  The 80 percent line is read on the swept corners, so the target cannot rise
+  to cover this tail without the hair ceiling rising with it.
 
 ## How to measure
 
@@ -121,16 +141,19 @@ cargo run --release --example garmentaudit [-- SEEDS] [--cuts]
 cargo test --release --test integration probe_the_rolled_population -- --ignored --nocapture
     the population the sweeps' corners stand for: 300 rolled people bald (as
     rolled, long broad, and the head envelope's ends at (2, 2) and (3, 3)),
-    the swept lean corners over seeds 0-79 bald and the greediest hair on the
-    dearest of them, the heavy corner the sweeps do not pin over the same
+    the swept lean corners over seeds 0-79 bald, the product bound on the
+    dearest of them and the dearest hair derived on each of the eight dearest,
+    built, the heavy corner the sweeps do not pin over the same
     seeds with its own hair, and 300 rolled beasts per family, built and bald,
     each as p50 / p90 / p99 and the dearest; for people, how many wear a
     garment on head-owned skin (none, since #353). About four minutes.
 
-cargo run --release --example refinecost [-- SEEDS]
+cargo run --release --example refinecost [-- SEEDS] [--skull B,L] [--corner F]
     per-pass cost of face refinement beside the cell it buys in each feature
     band, reported ACROSS and DOWN separately (the faces are 2:1; one median
-    lies).
+    lies). `--skull 1,1` pins the long broad head the sweeps pin, `--corner F`
+    the lean, thin, tall composites at frame F, so `2 --skull 1,1 --corner 0`
+    is the sweep's dearest corner.
 ```
 
 ## The rules, each learned the expensive way
@@ -168,10 +191,31 @@ greediest legal cut, one scalp card is 15 triangles as a crop, 42 as a tied-back
 tail and 65 as a ringlet, because both of the dear ones spend their cost on path
 and curvature rather than on count. The greedy record once wore a crop — the
 cheapest of the five — so the dearest legal record was **32,448 against a 30,000
-target while every budget test in this file passed**. The fix is that
-`the_dearest_variant_of_each_region_is_the_one_the_greedy_record_wears` costs
-every style in every catalogue on two bodies and fails naming the winner, so the
-corner is derived rather than picked. Any new catalogue anywhere owes the same.
+target while every budget test in this file passed**. The fix was a test that
+costed every style in every catalogue on two bodies and failed naming the
+winner, so the corner was derived rather than picked. **And a record derived on
+two bodies is picked again on the third** (#489): over seeds 0-39 as rolled, 24
+heads have a scalp style more than 3 % dearer than the bun that record wore (a
+crop 2,354 on seed 2, against 1,748), and the cut was picked too, since droop is
+not monotone (a crop on the dearest body costs 3,066 at droop 1 and 3,194 at 0).
+So `Head::dearest_hair` derives the dearest legal hair on the head a figure is
+argued for - every style of every catalogue at droop 0, 0.5 and 1, region by
+region - and the product corner stops depending on any one record: the tier
+holds every legal head to `MAX_TRIANGLES`, so the corner is the dearest bald
+body plus that ceiling, and the derived hair is what shows the ceiling is
+reached and held there. Any new catalogue anywhere owes the same.
+
+That the tier holds every legal head is sampled, not proven: `tiered` stops
+after `TIER_PASSES` scaling passes with no final clamp, and a shell it cannot
+thin slows it. #489's critic grew 2,080 random legal records on the dearest
+bodies - every helmet, card beards, droop 0 to 1, every region parameter at
+-1 to 1, asks up to 3,892 - and none grew past 3,300; several grew exactly
+3,300. There is no headroom, so a new style or region owes that sample again.
+And under CI's libm (the gate's `--libm` nudge, down one place) the hair
+derived on the dearest body grew 3,306, six over: the tier holds a head to the
+ceiling within `TIER_SLACK` (33, one percent, in `tests/budget.rs`), and the
+product bound must fit under the target with that slack on it - 33,459 at
+#489, 24,457 since milestone #16 re-based the target.
 
 **A sweep of six seeds is six bodies, not the population.** The head's axes
 are pinned to their dear ends because a seed draws them timidly (#61), and the
@@ -187,7 +231,11 @@ rooting fewer clumps, and a helmet's shell is `COLUMNS x ROWS` whatever it is
 asked for (#347). So once a helmet can be worn, the floor under
 `MAX_TRIANGLES` is the shell plus everything a re-roll can put beside it, and a
 tier test that grows one fixed beard under it measures a smaller floor than a
-rolled face does (2,832 against 3,276, #351).
+rolled face does (2,832 against 3,276, #351). The same fact bounds the product
+from the other side (#489): the tier holds a head to the ceiling only if what it
+cannot thin fits under it, so the product test grows every region in its solid
+style - a bun's shell and the sculpted brow, lip, chin and flank solids - on
+every swept body, and it has to fit: 2,934 at most, against 3,300.
 
 **A count is set in cards and paid for in triangles.** Four of the five hair
 regions have had their counts re-set for exactly this reason, and the scalp's
@@ -230,13 +278,41 @@ wrists and ankles, and the skin it hides from 1,480 to 2,052, so the *dearest*
 outfit is also the one that gives most back. A texture costs no triangles: it
 is baked into the cloth atlas, which is texture bytes, not geometry.
 
-**Where the levers are** (in order of size):
+**And the cloth itself was paid for twice over a refined trunk**
+(#491 and #493). A garment is a closed solid, and its inner wall was cut face for face
+from the same body faces as its outer shell, so every refinement pass under a
+top - `torso::refine_chest` on every body, `torso::refine_lobe` on a swelled
+chest - was drawn on both shells, though no camera reaches the inner one but
+at a hem. `Garment::thin_inner` merges the passes' quartered faces back on the
+inner wall wherever the skin over it is not drawn, keeping the hem's row, the
+rims and the outer shell exactly as sewn, and refuses any merge that would put
+the wall further out than the skin or through the outer shell. Measured with
+`garmentaudit` on seed 1, cloth now runs from 3,178 triangles sleeveless in the
+shortest shorts to 4,322 at the wrists and ankles (3,896 to 5,048 before it),
+and the skin it hides is unchanged. The top's inner wall on the default body
+went from 1,622 triangles to 890, on seed 207 at the long broad pin from 2,946
+to 1,240; the trousers have no refinement under them and do not change. The
+chest pass now costs 610 on the dressed default body, where it cost 1,138.
 
-1. **Anisotropic refinement.** The face's quads are 2:1 tall and the two
-   finest passes cost 8,120; a directional split would halve the direction the
-   mouth needs without paying for the one it does not.
-2. **The jaw-flank cut** — 1,284 triangles, but it undoes the refinement that
+**Where the levers are**:
+
+1. **The jaw-flank cut** - 1,284 triangles, but it undoes the refinement that
    gave the gonion its corner; a render judgement, not a number.
 
 Spent, and listed so it is not proposed again: **the skin under the clothes**,
-1,216 net on the default body.
+1,216 net on the default body; and **anisotropic refinement** (#189), the
+second nose-base pass halving its band DOWN only instead of quartering it:
+on the face refinement alone 5,014 on the default body and 6,432 at the
+dearest corner (`refinecost` row 10, 18,972 to 13,958 and 21,638 to 15,206),
+and on the built bodies 4,596 to 6,986 a person over 122 sampled (median
+5,638); then the lip band halved DOWN as well, the owner's pick by render
+(2026-11-22): another 1,052 on the default body and 1,072 at the dearest
+corner, the lips 1.42 by 1.13 mm. It was first measured tripping two guards,
+on a sawn lip parting; with the parting on its curve (#494) the moustache
+reads 1.16 against its guard's 1.25 and the mouth guard passes it at 2.05
+rows. See `face::skull`'s `Split::Down`. Beasts and winged bodies do not
+change. And **the inner wall's share
+of the trunk's refinement** (#493): 732 on the default body, 788 at the swept
+corner, 1,706 on seed 207 at the long broad pin and about 2,000 on the heavy
+corner; what is left on the inner wall is what the guards above would not
+merge, mostly round the swelled chest's fold and the armpit.

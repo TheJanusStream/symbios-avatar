@@ -661,7 +661,7 @@ impl PolyMesh {
     /// to undo.
     #[must_use]
     pub fn refine(&self, selected: &[bool]) -> PolyMesh {
-        self.refined(selected, 0.0)
+        self.refined(selected, 0.0, None)
     }
 
     /// The same split, with the new vertices placed on the surface's own
@@ -691,16 +691,78 @@ impl PolyMesh {
     /// face centroids. See its own docstring for the arithmetic.
     #[must_use]
     pub fn refine_curved(&self, selected: &[bool]) -> PolyMesh {
-        self.refined(selected, ROUND)
+        self.refined(selected, ROUND, None)
     }
 
-    /// Both of the above: `round` is how much of the tangent-plane correction
-    /// each new vertex takes, and zero is a plain midpoint.
-    fn refined(&self, selected: &[bool], round: f32) -> PolyMesh {
+    /// The curved split in ONE direction: each selected quad is cut in two
+    /// across `axis`, halving it along `axis` and leaving its extent across
+    /// `axis` as it was (#189).
+    ///
+    /// **Because a quad split one per corner keeps its aspect, and the head's
+    /// are not square.** [`PolyMesh::refine_curved`] quarters a face, so a cell
+    /// that arrives 2:1 leaves 2:1 however many passes follow, and a band that
+    /// needs only the long direction halved pays for both. Measured on the
+    /// default body, `face::skull`'s second nose-base pass took the mouth band
+    /// from 1.43 mm across and 4.51 down to 0.71 by 2.25 for 5,042 triangles,
+    /// when the lip terms that wanted it are narrow in HEIGHT. This halves the
+    /// long direction alone, for one new quad a face where a quartering costs
+    /// three: 1.42 by 2.25 there for 1,778.
+    ///
+    /// **Which way is "along" is asked of each quad, not of the mesh**: of its
+    /// two pairs of opposite edges, the pair that runs closer to `axis` is the
+    /// one cut, at the same lifted midpoints the curved split puts there, and a
+    /// new edge joins the two. On a tube swept up a bone that is the bone's
+    /// direction, so neighbouring quads agree about it.
+    ///
+    /// **No T-junctions, by the same rule as the quartering split, and two
+    /// directional splits side by side never make one.** Two halved quads
+    /// beside each other share the edge they both cut, so they share its
+    /// midpoint; one above the other share an edge neither cuts. Any face that
+    /// DOES find a new midpoint on one of its uncut edges - an unselected
+    /// neighbour, or one half of a quad that disagrees with the quad beside it
+    /// about which way is along - takes it into its corner list and becomes an
+    /// n-gon, exactly as the quartering split's band edges do. A selected face
+    /// that is not a quad, which an earlier pass may have left at a band edge,
+    /// has no pair of opposite edges to choose between and is quartered.
+    ///
+    /// An `axis` with no direction (zero, or not finite) has no "along" to
+    /// ask of any quad, and the split is [`PolyMesh::refine_curved`]'s: every
+    /// selected face quartered.
+    #[must_use]
+    pub fn refine_curved_along(&self, selected: &[bool], axis: Vec3) -> PolyMesh {
+        self.refined(selected, ROUND, axis.try_normalize())
+    }
+
+    /// All of the above: `round` is how much of the tangent-plane correction
+    /// each new vertex takes, and zero is a plain midpoint; `along`, when
+    /// given, halves each selected quad along that unit direction instead of
+    /// quartering it.
+    fn refined(&self, selected: &[bool], round: f32, along: Option<Vec3>) -> PolyMesh {
         let chosen = |face: usize| selected.get(face).copied().unwrap_or(false);
         if !(0..self.faces.len()).any(chosen) {
             return self.clone();
         }
+        // Which edge a halved quad's cut starts on: `Some(0)` cuts edges 0-1
+        // and 2-3, `Some(1)` cuts 1-2 and 3-0, and `None` quarters the face.
+        // Asked by both walks below, so the edges the first puts a midpoint on
+        // are the edges the second builds the halves from.
+        let halved = |index: usize| -> Option<usize> {
+            let axis = along?;
+            let face = &self.faces[index];
+            if face.len() != 4 {
+                return None;
+            }
+            let runs = |from: usize| {
+                let a = self.positions[face[from] as usize];
+                let b = self.positions[face[(from + 1) % 4] as usize];
+                (b - a).normalize_or_zero().dot(axis).abs()
+            };
+            Some(if runs(0) + runs(2) >= runs(1) + runs(3) {
+                0
+            } else {
+                1
+            })
+        };
         // Measured on the mesh that arrives, once: the corners a new vertex is
         // lifted from are all original ones, and none of them moves.
         let normals = if round == 0.0 {
@@ -733,7 +795,13 @@ impl PolyMesh {
             if !chosen(index) || face.len() < 3 {
                 continue;
             }
+            let start = halved(index);
             for corner in 0..face.len() {
+                // A halved quad cuts two opposite edges and leaves the other
+                // two whole.
+                if start.is_some_and(|start| corner % 2 != start) {
+                    continue;
+                }
                 let next = (corner + 1) % face.len();
                 let (a, b) = (face[corner], face[next]);
                 if let std::collections::hash_map::Entry::Vacant(slot) =
@@ -745,11 +813,35 @@ impl PolyMesh {
             }
         }
 
+        // A ring of corners with any midpoint on one of its sides taken in.
+        // Keyed on pairs of ORIGINAL vertices, so a side that runs to a vertex
+        // this split added never matches and is left alone.
+        let absorbed = |ring: &[u32]| -> Vec<u32> {
+            let mut corners = Vec::with_capacity(ring.len() + 2);
+            for corner in 0..ring.len() {
+                let next = (corner + 1) % ring.len();
+                corners.push(ring[corner]);
+                if let Some(&between) = midpoints.get(&edge_key(ring[corner], ring[next])) {
+                    corners.push(between);
+                }
+            }
+            corners
+        };
+
         for (index, face) in self.faces.iter().enumerate() {
             if face.len() < 3 {
                 continue;
             }
-            if chosen(index) {
+            if let (true, Some(start)) = (chosen(index), halved(index)) {
+                // Turned so the cut edges are 0-1 and 2-3. Each half keeps the
+                // face's winding and one of its whole edges - 1-2 or 3-0 - which
+                // a neighbour may have split.
+                let [a, b, c, d] = [0, 1, 2, 3].map(|step| face[(start + step) % 4]);
+                let near = midpoints[&edge_key(a, b)];
+                let far = midpoints[&edge_key(c, d)];
+                refined.push_face(absorbed(&[a, near, far, d]));
+                refined.push_face(absorbed(&[near, b, c, far]));
+            } else if chosen(index) {
                 let centre = refined.push_vertex(lifted(self.face_centroid(index), face));
                 for corner in 0..face.len() {
                     let previous = (corner + face.len() - 1) % face.len();
@@ -760,15 +852,7 @@ impl PolyMesh {
                 }
             } else {
                 // Absorb any midpoint a neighbour put on one of our edges.
-                let mut corners = Vec::with_capacity(face.len());
-                for corner in 0..face.len() {
-                    let next = (corner + 1) % face.len();
-                    corners.push(face[corner]);
-                    if let Some(&between) = midpoints.get(&edge_key(face[corner], face[next])) {
-                        corners.push(between);
-                    }
-                }
-                refined.push_face(corners);
+                refined.push_face(absorbed(face));
             }
         }
 
@@ -909,7 +993,7 @@ impl PolyMesh {
     /// the axes by an irrational-ish slope, so a shared edge is never hit twice.
     #[must_use]
     pub fn contains(&self, point: Vec3) -> bool {
-        let direction = Vec3::new(1.0, 0.017_321, 0.010_101).normalize();
+        let direction = containment_ray();
         let mut crossings = 0usize;
         // Fanned in place rather than through `triangulated`, which allocates:
         // this is called once per vertex of every attached part, over every seed
@@ -920,30 +1004,84 @@ impl PolyMesh {
             // that window misses its extent. Conservative in both directions, so
             // no crossing is ever lost.
             let (lo, hi) = face_bounds(&self.positions, face);
-            if hi.x <= point.x {
+            let Some(slab) = ray_slab(point, direction, lo, hi) else {
                 continue;
-            }
-            let near = ((lo.x - point.x) / direction.x).max(0.0);
-            let far = (hi.x - point.x) / direction.x;
-            let misses = |axis: usize| {
-                let from = point[axis] + direction[axis] * near;
-                let to = point[axis] + direction[axis] * far;
-                from.min(to) > hi[axis] || from.max(to) < lo[axis]
             };
-            if misses(1) || misses(2) {
+            if ray_misses(point, direction, lo, hi, slab, 1)
+                || ray_misses(point, direction, lo, hi, slab, 2)
+            {
                 continue;
             }
-
-            let anchor = self.positions[face[0] as usize];
-            for corner in 1..face.len().saturating_sub(1) {
-                let b = self.positions[face[corner] as usize];
-                let c = self.positions[face[corner + 1] as usize];
-                if ray_hits_triangle(point, direction, anchor, b, c) {
-                    crossings += 1;
-                }
-            }
+            crossings += self.ray_crossings(point, direction, face);
         }
         crossings % 2 == 1
+    }
+
+    /// How many of `face`'s fanned triangles the ray from `point` along
+    /// `direction` crosses: [`Self::contains`]'s count for one face.
+    #[inline]
+    fn ray_crossings(&self, point: Vec3, direction: Vec3, face: &[u32]) -> usize {
+        let anchor = self.positions[face[0] as usize];
+        let mut crossings = 0usize;
+        for corner in 1..face.len().saturating_sub(1) {
+            let b = self.positions[face[corner] as usize];
+            let c = self.positions[face[corner + 1] as usize];
+            if ray_hits_triangle(point, direction, anchor, b, c) {
+                crossings += 1;
+            }
+        }
+        crossings
+    }
+
+    /// Every face's axis-aligned bounds, in face order, for [`Self::column`].
+    #[must_use]
+    pub(crate) fn face_extents(&self) -> Vec<(Vec3, Vec3)> {
+        self.faces
+            .iter()
+            .map(|face| face_bounds(&self.positions, face))
+            .collect()
+    }
+
+    /// [`Self::contains`] for a run of points that share their `x` and `y`
+    /// and differ only in `z`: a bisection along a line, which is what
+    /// `face::skull` asks of the midline a few hundred times a build (#89).
+    ///
+    /// **The same answer as [`Self::contains`], to the bit, and built so it
+    /// cannot be anything else.** A face's slab and its `y` test read only
+    /// the point's `x` and `y`, so they are taken once here, against every
+    /// face, through the very functions `contains` calls; [`Column::contains`]
+    /// then takes the `z` test and the triangles over the faces that passed,
+    /// through the same functions again. A face this drops is one `contains`
+    /// drops at the same test, and every face it keeps is counted as
+    /// `contains` counts it.
+    ///
+    /// `extents` is [`Self::face_extents`] of this mesh, taken once and handed
+    /// to every column cut from it.
+    #[must_use]
+    pub(crate) fn column<'a>(&'a self, extents: &[(Vec3, Vec3)], x: f32, y: f32) -> Column<'a> {
+        debug_assert_eq!(extents.len(), self.faces.len(), "extents of another mesh");
+        let direction = containment_ray();
+        // The slab reads only `x` and the test below only `y`.
+        let point = Vec3::new(x, y, 0.0);
+        let faces = extents
+            .iter()
+            .enumerate()
+            .filter_map(|(face, &(lo, hi))| {
+                let slab = ray_slab(point, direction, lo, hi)?;
+                (!ray_misses(point, direction, lo, hi, slab, 1)).then_some(ColumnFace {
+                    face: face as u32,
+                    slab,
+                    z: (lo.z, hi.z),
+                })
+            })
+            .collect();
+        Column {
+            mesh: self,
+            x,
+            y,
+            direction,
+            faces,
+        }
     }
 
     /// Audits topology and winding.
@@ -1032,6 +1170,83 @@ impl PolyMesh {
         }
         out
     }
+}
+
+/// [`PolyMesh::contains`] along one line parallel to `z`: see
+/// [`PolyMesh::column`].
+pub(crate) struct Column<'a> {
+    mesh: &'a PolyMesh,
+    x: f32,
+    y: f32,
+    direction: Vec3,
+    /// The faces whose slab and `y` test pass, in face order.
+    faces: Vec<ColumnFace>,
+}
+
+/// One face a [`Column`] kept: which face, the ray's slab through it, and its
+/// extent in `z` for the one test left to take.
+struct ColumnFace {
+    face: u32,
+    slab: (f32, f32),
+    z: (f32, f32),
+}
+
+impl Column<'_> {
+    /// Whether the point at `z` on this column lies inside the mesh:
+    /// [`PolyMesh::contains`] of `(x, y, z)`, to the bit.
+    #[must_use]
+    pub(crate) fn contains(&self, z: f32) -> bool {
+        let point = Vec3::new(self.x, self.y, z);
+        let mut crossings = 0usize;
+        for kept in &self.faces {
+            // `ray_misses` reads only the asked axis of the bounds.
+            let lo = Vec3::new(0.0, 0.0, kept.z.0);
+            let hi = Vec3::new(0.0, 0.0, kept.z.1);
+            if ray_misses(point, self.direction, lo, hi, kept.slab, 2) {
+                continue;
+            }
+            let face = &self.mesh.faces[kept.face as usize];
+            crossings += self.mesh.ray_crossings(point, self.direction, face);
+        }
+        crossings % 2 == 1
+    }
+}
+
+/// The ray [`PolyMesh::contains`] casts, nudged off the axes by an
+/// irrational-ish slope so a shared edge is never hit twice.
+#[inline]
+fn containment_ray() -> Vec3 {
+    Vec3::new(1.0, 0.017_321, 0.010_101).normalize()
+}
+
+/// The span of the ray's parameter over a face's slab of `x`, or `None` where
+/// the face lies wholly behind the ray's start: [`PolyMesh::contains`]'s
+/// first rejection. Reads only `x` of the point and of the bounds.
+#[inline]
+fn ray_slab(point: Vec3, direction: Vec3, lo: Vec3, hi: Vec3) -> Option<(f32, f32)> {
+    if hi.x <= point.x {
+        return None;
+    }
+    let near = ((lo.x - point.x) / direction.x).max(0.0);
+    let far = (hi.x - point.x) / direction.x;
+    Some((near, far))
+}
+
+/// Whether the ray, over the slab `(near, far)`, misses a face's extent on
+/// `axis`: [`PolyMesh::contains`]'s second and third rejections. Reads only
+/// `axis` of the point and of the bounds.
+#[inline]
+fn ray_misses(
+    point: Vec3,
+    direction: Vec3,
+    lo: Vec3,
+    hi: Vec3,
+    (near, far): (f32, f32),
+    axis: usize,
+) -> bool {
+    let from = point[axis] + direction[axis] * near;
+    let to = point[axis] + direction[axis] * far;
+    from.min(to) > hi[axis] || from.max(to) < lo[axis]
 }
 
 /// Axis-aligned bounds of one face.
@@ -1170,6 +1385,36 @@ mod tests {
         assert!(mesh.is_closed_manifold(), "{:?}", mesh.manifold_report());
         assert_eq!(mesh.quad_fraction(), 1.0);
         assert_eq!(mesh.triangulated().len(), 12);
+    }
+
+    #[test]
+    fn a_column_answers_what_contains_answers() {
+        // The column is `contains` with its per-point work split in two (#89),
+        // and it is only worth having if the split changes nothing. Over a
+        // grid that puts points inside, outside, and exactly on the cube's
+        // faces, edges and corners - the planes 0 and 1 are grid lines, so
+        // rays start on a face and graze an edge - and the same over the
+        // rounded cube two subdivisions make of it.
+        let steps = |n: usize| (0..=n).map(move |at| -0.25 + 1.5 * at as f32 / n as f32);
+        for (label, mesh) in [
+            ("cube", cube()),
+            ("rounded", crate::catmull_clark(&cube(), 2)),
+        ] {
+            let extents = mesh.face_extents();
+            let mut inside = 0usize;
+            for x in steps(12) {
+                for y in steps(12) {
+                    let column = mesh.column(&extents, x, y);
+                    for z in steps(24) {
+                        let point = Vec3::new(x, y, z);
+                        let held = mesh.contains(point);
+                        assert_eq!(column.contains(z), held, "{label} at {point}");
+                        inside += usize::from(held);
+                    }
+                }
+            }
+            assert!(inside > 100, "{label}: only {inside} points inside");
+        }
     }
 
     #[test]
@@ -1353,6 +1598,100 @@ mod tests {
             4 + 1,
             "expected the four new quads and the one untouched face"
         );
+    }
+
+    /// A flat sheet of `columns` by `rows` quads in the XY plane, each one
+    /// `width` across and `height` tall - the head's tall cells, flat so that
+    /// the curved split's lift is zero and every new vertex is a plain midpoint.
+    fn sheet(columns: usize, rows: usize, width: f32, height: f32) -> PolyMesh {
+        let mut mesh = PolyMesh::new();
+        for row in 0..=rows {
+            for column in 0..=columns {
+                mesh.push_vertex(Vec3::new(column as f32 * width, row as f32 * height, 0.0));
+            }
+        }
+        let at = |column: usize, row: usize| (row * (columns + 1) + column) as u32;
+        for row in 0..rows {
+            for column in 0..columns {
+                mesh.push_face([
+                    at(column, row),
+                    at(column + 1, row),
+                    at(column + 1, row + 1),
+                    at(column, row + 1),
+                ]);
+            }
+        }
+        mesh
+    }
+
+    #[test]
+    fn a_directional_split_halves_a_cell_along_its_axis_alone() {
+        // #189. The head's quads are 2:1 to 3.5:1 tall and a quartering keeps
+        // that; this halves the tall direction and leaves the width, for one
+        // new quad a face rather than three.
+        let flat = sheet(3, 2, 1.0, 2.0);
+        let all = vec![true; flat.face_count()];
+        for (axis, width, height) in [(Vec3::Y, 1.0f32, 1.0f32), (Vec3::X, 0.5, 2.0)] {
+            let halved = flat.refine_curved_along(&all, axis);
+            assert_eq!(halved.face_count(), flat.face_count() * 2);
+            assert_eq!(
+                &halved.positions[..flat.positions.len()],
+                &flat.positions[..],
+                "the directional split moved a vertex that already existed"
+            );
+            for face in &halved.faces {
+                assert_eq!(
+                    face.len(),
+                    4,
+                    "a fully selected sheet came out with an n-gon"
+                );
+                let span = |of: fn(Vec3) -> f32| {
+                    let values = face.iter().map(|&v| of(halved.positions[v as usize]));
+                    values.clone().fold(f32::MIN, f32::max) - values.fold(f32::MAX, f32::min)
+                };
+                assert!(
+                    (span(|p| p.x) - width).abs() < 1e-6 && (span(|p| p.y) - height).abs() < 1e-6,
+                    "split along {axis:?}: a cell {} by {}, against {width} by {height}",
+                    span(|p| p.x),
+                    span(|p| p.y)
+                );
+            }
+        }
+    }
+
+    #[test]
+    fn a_directional_split_leaves_no_hanging_vertices() {
+        // One face of a sheet, halved down: its left and right neighbours share
+        // a cut edge and take its midpoint as pentagons; the faces above and
+        // below share an edge nobody cut and stay quads.
+        let flat = sheet(3, 3, 1.0, 2.0);
+        let mut selected = vec![false; flat.face_count()];
+        selected[4] = true; // the middle one
+        let halved = flat.refine_curved_along(&selected, Vec3::Y);
+        let count = |corners: usize| halved.faces.iter().filter(|f| f.len() == corners).count();
+        assert_eq!(count(5), 2, "only the two side neighbours take a midpoint");
+        assert_eq!(
+            count(4),
+            2 + 6,
+            "the two halves and the six untouched faces"
+        );
+
+        // And on a closed surface, under every selection: the cube's sides are
+        // halved down, its top and bottom have no edge nearer the axis than
+        // another and are halved whichever way the tie falls, and a face that
+        // disagrees with its neighbour about it takes the midpoint in.
+        let cube = cube();
+        for mask in 1u32..(1 << cube.face_count()) {
+            let selected: Vec<bool> = (0..cube.face_count())
+                .map(|face| mask & (1 << face) != 0)
+                .collect();
+            let halved = cube.refine_curved_along(&selected, Vec3::Y);
+            assert!(
+                halved.is_closed_manifold(),
+                "selection {mask:06b} is not watertight: {:?}",
+                halved.manifold_report()
+            );
+        }
     }
 
     #[test]

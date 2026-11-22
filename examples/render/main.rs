@@ -68,11 +68,13 @@
 //! cargo run --release --example render -- --hair 0 0 0 0 0     # a fifth zero shaves every region
 //! cargo run --release --example render -- --face 1,0.5,1,1,0.5,0.5 # nose,noseWidth,brow,mouth,mouthWidth,ears
 //! cargo run --release --example render -- --skull -1,1            # headBreadth,faceLength
+//! cargo run --release --example render -- --seed 2 --skull 1,1 --corner 0  # the budget sweep's lean thin tall corner at frame 0
 //! cargo run --release --example render -- --femininity 1  # the frame axis, -1 .. +1
 //! cargo run --release --example render -- --head-size -1  # the head's own size axis
 //! cargo run --release --example render -- --mass 1 --fat 0.10  # heavy and lean: muscular
 //! cargo run --release --example render -- --age 80  # the age axis, 18 .. 80 years
 //! cargo run --release --example render -- --pass ao   # or normal, albedo, shadow, roughness
+//! cargo run --release --example render -- --pass wire --close head  # every triangle edge over the lit body (#308)
 //! cargo run --release --example render -- --quadruped
 //! cargo run --release --example render -- --quadruped --gallery 16   # 16 rolls side by side
 //! cargo run --release --example render -- --quadruped --gallery 16 --pass silhouette
@@ -775,6 +777,25 @@ fn run() {
         record.locks = was;
     }
 
+    // The budget sweep's lean, thin, tall corner at a place on the frame axis
+    // (`corners` in tests/budget.rs, #353): femininity as given, mass -2, body
+    // fat at the bottom of its range and the tallest stature. Pinned after the
+    // roll and without re-rolling the hair, as the sweep pins it, so `--seed 2
+    // --skull 1,1 --corner 0` is the very body the ratchet's dearest corner
+    // names - which `--femininity` cannot draw, since it re-rolls the hair.
+    if let Some(spec) = value("--corner") {
+        let Ok(frame) = spec.parse::<f32>() else {
+            eprintln!("--corner takes a place on the frame axis, -2 to 2, not `{spec}`");
+            std::process::exit(2);
+        };
+        record.composites.femininity = frame;
+        record.composites.mass = -2.0;
+        record.composites.body_fat = symbios_avatar::plan::BODY_FAT_RANGE.0;
+        if let Archetype::Humanoid(params) = &mut record.archetype {
+            params.height = symbios_avatar::plan::humanoid_height_range().1;
+        }
+        record.sanitize();
+    }
     if let Some(spec) = value("--skull") {
         let given: Vec<f32> = spec
             .split(',')
@@ -2939,9 +2960,21 @@ impl Subject {
             let share = side as f32 / (VIEW * SUPERSAMPLE) as f32;
             buffer.floor = share * share;
         }
+        // The wire pass (#308) is the finished picture with every triangle
+        // edge drawn over it, so it shades as the plain sheet does; asked for
+        // or not, nothing else in the buffer changes.
+        let wired = self.show.pass.as_deref() == Some("wire");
+        if wired {
+            buffer.wire = Some(vec![0.0; side * side]);
+        }
         buffer.draw(&items, frame);
         let ao = light::occlusion(&buffer, frame);
         let shaded = match &self.show.pass {
+            Some(_) if wired => {
+                let mut shaded = light::shade(&buffer, &ao, frame, &shadow);
+                light::wire(&mut shaded, &buffer);
+                shaded
+            }
             Some(pass) => light::inspect(&buffer, &ao, frame, &shadow, pass),
             None => light::shade(&buffer, &ao, frame, &shadow),
         };
@@ -3994,6 +4027,7 @@ fn items<'a>(
             specular: 0.02,
             wrap: 0.0,
         },
+        wire: None,
     }];
 
     for (drawn, tint) in built.iter().zip(tints) {
@@ -4049,6 +4083,15 @@ fn items<'a>(
             tint: tint.as_deref().or(own),
             cutout,
             material,
+            // The clay `--pass wire` draws each kind in (#308): warm for skin,
+            // cool for cloth, darker for hair, pale for the eyes, so the four
+            // draws still tell apart with every atlas and dye taken off.
+            wire: Some(match drawn.kind {
+                MeshKind::Skin => Vec3::new(0.80, 0.74, 0.68),
+                MeshKind::Cloth => Vec3::new(0.62, 0.68, 0.78),
+                MeshKind::Hair => Vec3::new(0.52, 0.47, 0.42),
+                MeshKind::Eye => Vec3::new(0.92, 0.92, 0.92),
+            }),
         });
     }
 

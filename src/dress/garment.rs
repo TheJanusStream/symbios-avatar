@@ -18,6 +18,11 @@
 //! skin, and a rim joining them at every hem. Cloth has two sides and a cut edge,
 //! and a single offset surface has none of those: seen from underneath it
 //! vanishes, and at the hem it reads as a sticker.
+//!
+//! The inner shell need not be as fine as the outer one, since no camera
+//! reaches it but at a hem: a built avatar's garments have it rebuilt without
+//! the body's refinement passes wherever the skin over it is not drawn
+//! ([`Garment::thin_inner`], #493).
 
 use std::collections::HashMap;
 
@@ -789,26 +794,35 @@ impl Garment {
             .filter(|&face| mine.get(face as usize).copied().unwrap_or(false))
             .collect();
 
+        // Three blocks, in this order: the outer shell, one face per covered
+        // face, `claim[i]`'s at `i`; the inner shell; the rims. See
+        // [`Garment::outer_faces`]. They were interleaved until #493, each
+        // outer face followed by its inner twin, which an inner wall thinned
+        // by [`Garment::thin_inner`] no longer has one of for every face.
         let mut corner_source: Vec<Vec<(u32, u8)>> =
             Vec::with_capacity(corner_at.len() * 2 + hem.len());
         for (row, &body_face) in corner_at.iter().zip(&claim) {
-            let outer: Vec<u32> = row.clone();
-            // The inner shell faces the other way, so its winding is reversed.
-            let inner: Vec<u32> = outer.iter().rev().map(|&v| v + inner_base).collect();
-            let corners = row.len();
             corner_source.push(
-                (0..corners)
+                (0..row.len())
                     .map(|corner| (body_face, corner as u8))
                     .collect(),
             );
+            garment.push_face(row.clone());
+        }
+        for (row, &body_face) in corner_at.iter().zip(&claim) {
+            // The inner shell faces the other way, so its winding is reversed.
+            garment.push_face(
+                row.iter()
+                    .rev()
+                    .map(|&v| v + inner_base)
+                    .collect::<Vec<u32>>(),
+            );
             corner_source.push(
-                (0..corners)
+                (0..row.len())
                     .rev()
                     .map(|corner| (body_face, corner as u8))
                     .collect(),
             );
-            garment.push_face(outer);
-            garment.push_face(inner);
         }
 
         for &(face, at) in &hem {
@@ -874,6 +888,7 @@ impl Garment {
         );
         garment.paint(Vec3::from_array(colour));
 
+        debug_assert_eq!(garment.faces.len(), claim.len() * 2 + hem.len());
         Some(Self {
             mesh: garment,
             source: cut_from,
@@ -897,6 +912,152 @@ impl Garment {
     #[must_use]
     pub fn vertex_count(&self) -> usize {
         self.mesh.vertex_count()
+    }
+
+    /// Where the outer shell's faces sit in [`mesh`](Self::mesh): one per
+    /// covered body face, `claim[i]`'s at `i`, wound the body's way.
+    ///
+    /// The mesh's faces are three blocks - this one, then
+    /// [`inner_faces`](Self::inner_faces), then [`rims`](Self::rims) - and
+    /// [`corner_source`](Self::corner_source) follows them face for face.
+    #[must_use]
+    pub fn outer_faces(&self) -> std::ops::Range<usize> {
+        0..self.claim.len()
+    }
+
+    /// Where the inner shell's faces sit in [`mesh`](Self::mesh), wound
+    /// against the outer shell's.
+    ///
+    /// One per covered body face as sewn, and fewer once
+    /// [`thin_inner`](Self::thin_inner) has undone the refinement under the
+    /// garment, so nothing but this range says where the block ends.
+    #[must_use]
+    pub fn inner_faces(&self) -> std::ops::Range<usize> {
+        self.claim.len()..self.rims().start
+    }
+
+    /// Where the rims sit in [`mesh`](Self::mesh): the last block, one quad
+    /// per hem edge, which is one per entry of [`hem`](Self::hem).
+    #[must_use]
+    pub fn rims(&self) -> std::ops::Range<usize> {
+        let faces = self.mesh.faces.len();
+        let rims: usize = self.hem.iter().map(Vec::len).sum();
+        faces.saturating_sub(rims)..faces
+    }
+
+    /// Builds the inner wall again without the cells a refinement pass split,
+    /// wherever the skin over it is not drawn (#493).
+    ///
+    /// **No camera reaches the inner wall but at a hem.** It faces the body
+    /// from a bite inside the skin, and over every [`hidden`](Self::hidden)
+    /// face the skin is not drawn and the outer shell and the rims enclose it
+    /// on every side - so a refined cell there is paid for twice, once on the
+    /// outer shell, where its shape is seen, and once on the inner, where it is
+    /// not. Measured at #491 on seed 207 at the long broad pin, heavy, fat and
+    /// feminine: `torso::refine_lobe` put 1,258 faces under the top and the
+    /// top's closed shell drew them about twice, 6,032 triangles of cloth
+    /// against the swept corner's 3,952.
+    ///
+    /// `subdivided` is how many of the body's vertices its subdivision made
+    /// (what `build_body` had before its first refinement pass). A refinement
+    /// pass only appends: the midpoints of the edges it splits, then the
+    /// centre of each face it quarters, every one numbered past every vertex
+    /// it found (`PolyMesh::refine_curved`). So a quartered face is a centre
+    /// whose faces round it each run midpoint, one older corner, midpoint,
+    /// and whose midpoints are all older than it and younger than the
+    /// corners - and the face it was is those corners and midpoints as one
+    /// ring. Each such fan is merged back, latest pass first, and a midpoint
+    /// left between two merged faces and no others is taken out of both, which
+    /// gives the band edge's n-gon its old side back as well. A centre under
+    /// `subdivided` is the subdivision's own face point and is left alone: the
+    /// base grid is what the outer shell is cut at everywhere else, and a
+    /// coarser inner wall than that would be inner cells crossing a bending
+    /// joint that the outer ones follow. A caller with no record of the
+    /// refinement passes the body's vertex count, and nothing changes.
+    ///
+    /// **Only quartering passes are undone, and that is a premise, not a
+    /// check.** A pass that halves its faces DOWN
+    /// (`PolyMesh::refine_curved_along`, #189) appends midpoints and no
+    /// centres, and a midpoint shared by four halves of two faces can look
+    /// like a centre to the walk above, which could then merge across the two.
+    /// Every such pass is the face's (`face::skull`'s `FACE_PASSES`), on
+    /// head-owned skin no garment claims; a halving pass under cloth owes this
+    /// walk a way to tell its midpoints apart first.
+    ///
+    /// **And only where the coarser face is no closer to the cloth than the
+    /// fine ones were.** Every merge and every midpoint taken out is refused
+    /// unless each inner twin it drops still finds the new face on its own
+    /// column no more than `WALL_RISE` of the way out to its outer twin, and
+    /// unless the new face cuts through none of the outer shell's triangles.
+    /// Without them a face merged back over the swelled chest's fold stood
+    /// 9.9 mm out of a twin it dropped on seed 207 at the long broad pin, past
+    /// the outer shell, and showed through the cloth on a render that draws
+    /// both sides. With them, at rest and through six built-in gestures on
+    /// eight bodies, the wall stands at most 5.2 mm out of a dropped twin (a
+    /// bow, on seed 9) against a 9.5 mm gap; and on thirty-eight bodies across
+    /// the garment lengths, at rest and in four gesture poses, the inner and
+    /// outer shells cross in no more places than they did before in any of
+    /// them, 32,731 crossing triangle pairs against 34,992
+    /// (`exports/milestone16/probe493.rs`, `--poke` and `--cross`).
+    ///
+    /// Measured at #493: the top's inner wall on the default body 1,622
+    /// triangles to 890 and its cloth 3,384 to 2,652; on seed 207 at the long
+    /// broad pin 2,946 to 1,240, cloth 6,032 to 4,326. The trousers have no
+    /// refinement under them and keep every face.
+    ///
+    /// **Only the inner block changes.** The outer shell, the rims and every
+    /// vertex stay as sewn, and so does every inner face over skin that is
+    /// drawn - the hem's row and any face a repaired column touches, which is
+    /// `claim` less `hidden` - so the hem, the rim and the inner wall's row
+    /// beside them are exactly what they were. Nothing moves: the faces merged
+    /// are rings of the inner shell's own vertices, a bite inside the skin, and
+    /// the inner twins the thinned wall no longer uses stay in the vertex list,
+    /// so a column's twin is still that column plus half the count. No face
+    /// refers to them and [`Self::charted`], which is what is drawn, never
+    /// copies them.
+    ///
+    /// The result is still a closed solid: each merge replaces a fan by its
+    /// boundary and each midpoint taken out sits on exactly two faces, so
+    /// every edge is still used once each way.
+    pub fn thin_inner(&mut self, subdivided: usize) {
+        let outer = self.outer_faces();
+        let half = (self.source.len() / 2) as u32;
+        let drawn: Vec<bool> = {
+            // `hidden` is `claim` filtered in order, so one walk pairs them.
+            let mut hidden = self.hidden.iter().peekable();
+            self.claim
+                .iter()
+                .map(|face| {
+                    let covered = hidden.peek() == Some(&face);
+                    if covered {
+                        hidden.next();
+                    }
+                    !covered
+                })
+                .collect()
+        };
+        let walls = thinned(
+            &self.mesh.faces[outer.clone()],
+            &self.corner_source[outer],
+            &drawn,
+            &self.source[..half as usize],
+            &self.mesh.positions,
+            subdivided as u32,
+        );
+        let rims = self.rims();
+        let rim_faces = self.mesh.faces.split_off(rims.start);
+        let rim_sources = self.corner_source.split_off(rims.start);
+        self.mesh.faces.truncate(self.claim.len());
+        self.corner_source.truncate(self.claim.len());
+        for wall in walls {
+            self.mesh
+                .faces
+                .push(wall.ring.iter().rev().map(|&v| v + half).collect());
+            self.corner_source
+                .push(wall.from.iter().rev().copied().collect());
+        }
+        self.mesh.faces.extend(rim_faces);
+        self.corner_source.extend(rim_sources);
     }
 
     /// Charts the garment against the body's atlas, one coordinate per
@@ -944,9 +1105,8 @@ impl Garment {
         // A rim's corners are keyed by the face they were cut from as well:
         // one vertex is drawn into a different face beside each rim it joins.
         let mut rim_copies: HashMap<(u32, u32, u8), u32> = HashMap::new();
-        // Each covered face pushed its outer and its inner face; the rims
-        // come after all of them.
-        let rims = self.claim.len() * 2;
+        // The rims are the last block, after both shells.
+        let rims = self.rims().start;
         let mut mesh = PolyMesh::new();
         let (mut uvs, mut normal_of, mut skin, mut colours) =
             (Vec::new(), Vec::new(), Vec::new(), Vec::new());
@@ -1066,6 +1226,429 @@ fn borrowed(weights: &SkinWeights, vertex: usize) -> [Influence; MAX_INFLUENCES]
 /// The undirected key an edge is looked up by, endpoints in order.
 fn edge_key(a: u32, b: u32) -> (u32, u32) {
     if a < b { (a, b) } else { (b, a) }
+}
+
+/// How far out of a vertex it drops the thinned inner wall may stand, as a
+/// share of that vertex's gap to its outer twin (#493).
+///
+/// **About a bite, so the thinned wall stays inside the body.** The inner
+/// shell is a bite under the skin and the outer one a thickness over it, so a
+/// default cut's gap is 9.5 mm and this is 1.4 mm of it: the wall may rise to
+/// the skin it was cut under and no further. Unguarded, a face merged back
+/// over the swelled chest's fold stood 9.9 mm out of the vertex it dropped at
+/// rest on seed 207 at the long broad pin, through the outer shell, and on the
+/// heavy corner 15 to 18 mm out under a bow (`exports/milestone16/probe493.rs
+/// --poke`). Inward it may go as far as it likes: on a convex surface every
+/// chord does, and inside the body is where no camera is.
+const WALL_RISE: f32 = 0.15;
+
+/// One face of the inner wall while [`Garment::thin_inner`] works on it: its
+/// columns in the OUTER shell's winding and numbering, and the body corner
+/// each was cut from, which is what charts it.
+struct Wall {
+    ring: Vec<u32>,
+    from: Vec<(u32, u8)>,
+    /// The columns whose inner twins this face stands in for, which every
+    /// change to it is measured against (see [`WALL_RISE`]).
+    covered: Vec<u32>,
+    /// Over skin that is drawn: never merged, and no midpoint leaves it.
+    kept: bool,
+    alive: bool,
+}
+
+/// Where the inner wall's faces would be drawn, read off the garment's own
+/// vertices: outer twins first, inner twins `half` on.
+struct Gauge<'a> {
+    points: &'a [Vec3],
+    half: usize,
+    /// The outer shell's triangles, each with its bounding box.
+    outer: Vec<([Vec3; 3], (Vec3, Vec3))>,
+}
+
+impl Gauge<'_> {
+    /// Whether `triangles` stay clear of the outer shell: cut through none of
+    /// its triangles. The inner wall as sewn already crosses the outer shell
+    /// in places - in the swelled chest's fold, 179 crossing triangle pairs on
+    /// seed 207 at the long broad pin, 269 on the heavy corner's seed 7 - and
+    /// a face that would cross where the faces it replaces did not is a face
+    /// `examples/render`, which draws both sides, shows through the cloth.
+    /// Asked of the whole shell and not the cells round the face, because a
+    /// column `stood_off` moved can swing an outer face a long way from the
+    /// cells it was cut from.
+    fn clear(&self, triangles: &[[Vec3; 3]]) -> bool {
+        let Some((low, high)) = bounds(triangles.iter().flatten()) else {
+            return true;
+        };
+        self.outer
+            .iter()
+            .filter(|(_, (lo, hi))| lo.cmple(high).all() && low.cmple(*hi).all())
+            .all(|(outer, _)| triangles.iter().all(|inner| !cut_through(inner, outer)))
+    }
+
+    /// The triangles `ring` draws as an inner face: reversed, and fanned from
+    /// its new first corner, which is how every consumer triangulates it.
+    fn drawn(&self, ring: &[u32]) -> impl Iterator<Item = [Vec3; 3]> + '_ {
+        let at = |column: u32| self.points[self.half + column as usize];
+        let reversed: Vec<Vec3> = ring.iter().rev().map(|&column| at(column)).collect();
+        (1..reversed.len().saturating_sub(1))
+            .map(move |i| [reversed[0], reversed[i], reversed[i + 1]])
+    }
+
+    /// Where the line through `column`'s inner twin and its outer twin crosses
+    /// `triangles`, nearest the inner twin, as signed metres toward the outer
+    /// twin - and that column's gap; `None` when it crosses none of them.
+    fn crossing(&self, triangles: &[[Vec3; 3]], column: u32) -> Option<(f32, f32)> {
+        let inner = self.points[self.half + column as usize];
+        let line = self.points[column as usize] - inner;
+        let gap = line.length();
+        let along = line.try_normalize()?;
+        let mut nearest: Option<f32> = None;
+        for &[a, b, c] in triangles {
+            let (side, other) = (b - a, c - a);
+            let normal = along.cross(other);
+            let det = side.dot(normal);
+            if det.abs() <= f32::EPSILON * side.length_squared().max(1e-12) {
+                continue;
+            }
+            let from = inner - a;
+            let u = from.dot(normal) / det;
+            let turned = from.cross(side);
+            let v = along.dot(turned) / det;
+            if !(-1e-4..=1.0 + 1e-4).contains(&u) || v < -1e-4 || u + v > 1.0 + 1e-4 {
+                continue;
+            }
+            let t = other.dot(turned) / det;
+            if nearest.is_none_or(|best| t.abs() < best.abs()) {
+                nearest = Some(t);
+            }
+        }
+        nearest.map(|t| (t, gap))
+    }
+
+    /// Whether every column in `covered` finds the wall `triangles` draw on
+    /// its own line, no more than [`WALL_RISE`] of its gap out of its twin.
+    fn holds(&self, triangles: &[[Vec3; 3]], covered: &[u32]) -> bool {
+        covered.iter().all(|&column| {
+            self.crossing(triangles, column)
+                .is_some_and(|(t, gap)| t <= WALL_RISE * gap)
+        })
+    }
+
+    /// Turns `ring` to the first corner whose fan holds `covered` and stays
+    /// [`clear`](Self::clear) of the outer shell, or says none does. A merged ring is not convex in general - a midpoint is
+    /// lifted off its chord - so which corner its fan starts from decides
+    /// what surface it draws.
+    fn seat(&self, ring: &mut [u32], from: &mut [(u32, u8)], covered: &[u32]) -> bool {
+        for turn in 0..ring.len() {
+            let triangles: Vec<[Vec3; 3]> = self.drawn(ring).collect();
+            if self.holds(&triangles, covered) && self.clear(&triangles) {
+                return true;
+            }
+            if turn + 1 < ring.len() {
+                ring.rotate_left(1);
+                from.rotate_left(1);
+            }
+        }
+        ring.rotate_left(1);
+        from.rotate_left(1);
+        false
+    }
+}
+
+/// The inner wall over `rows`, with every refinement pass under hidden skin
+/// undone where [`WALL_RISE`] allows - [`Garment::thin_inner`]'s whole
+/// argument is there.
+///
+/// `rows` and `from` are the outer shell's faces and corner sources, `drawn`
+/// flags each covered face whose skin is drawn, `source` is the body vertex of
+/// each column (the outer half of [`Garment::source`]), `points` the
+/// garment's vertices and `subdivided` the first body vertex a refinement
+/// pass made. Returns the wall's faces in the outer winding, the faces no
+/// merge touched first and in their own order.
+fn thinned(
+    rows: &[Vec<u32>],
+    from: &[Vec<(u32, u8)>],
+    drawn: &[bool],
+    source: &[u32],
+    points: &[Vec3],
+    subdivided: u32,
+) -> Vec<Wall> {
+    let gauge = Gauge {
+        points,
+        half: source.len(),
+        outer: rows
+            .iter()
+            .flat_map(|ring| {
+                (1..ring.len().saturating_sub(1))
+                    .map(|i| [ring[0], ring[i], ring[i + 1]].map(|c| points[c as usize]))
+            })
+            .filter_map(|triangle| Some((triangle, bounds(triangle.iter())?)))
+            .collect(),
+    };
+    let mut walls: Vec<Wall> = rows
+        .iter()
+        .zip(from)
+        .zip(drawn)
+        .map(|((ring, from), &kept)| Wall {
+            ring: ring.clone(),
+            from: from.clone(),
+            covered: Vec::new(),
+            kept,
+            alive: true,
+        })
+        .collect();
+    let columns = source.len();
+    let fans_of = |walls: &[Wall]| {
+        let mut fans: Vec<Vec<usize>> = vec![Vec::new(); columns];
+        for (index, wall) in walls.iter().enumerate().filter(|(_, wall)| wall.alive) {
+            for &column in &wall.ring {
+                fans[column as usize].push(index);
+            }
+        }
+        fans
+    };
+    // Latest pass first: its centres are the youngest vertices, and a fan of
+    // an older pass is only whole again once the faces inside it are.
+    let mut centres: Vec<u32> = (0..columns as u32)
+        .filter(|&column| source[column as usize] >= subdivided)
+        .collect();
+    centres.sort_by_key(|&column| std::cmp::Reverse(source[column as usize]));
+    loop {
+        let fans = fans_of(&walls);
+        let mut freed: Vec<u32> = Vec::new();
+        for &centre in &centres {
+            let fan = &fans[centre as usize];
+            if fan.len() < 3 {
+                continue;
+            }
+            let Some((mut ring, mut corners, midpoints)) =
+                unrefined(&walls, fan, centre, source, subdivided)
+            else {
+                continue;
+            };
+            let mut covered = vec![centre];
+            for &face in fan {
+                covered.extend_from_slice(&walls[face].covered);
+            }
+            if !gauge.seat(&mut ring, &mut corners, &covered) {
+                continue;
+            }
+            for &face in fan {
+                walls[face].alive = false;
+            }
+            walls.push(Wall {
+                ring,
+                from: corners,
+                covered,
+                kept: false,
+                alive: true,
+            });
+            freed.extend(midpoints);
+        }
+        if freed.is_empty() {
+            break;
+        }
+        // A midpoint between two merged faces and nothing else is a vertex on
+        // a run of one edge: out of both, and the edge is whole again - if the
+        // two faces still hold everything they stand in for, and it.
+        freed.sort_unstable();
+        freed.dedup();
+        let fans = fans_of(&walls);
+        let mut edges: std::collections::HashSet<(u32, u32)> = walls
+            .iter()
+            .filter(|wall| wall.alive)
+            .flat_map(|wall| {
+                (0..wall.ring.len())
+                    .map(|at| edge_key(wall.ring[at], wall.ring[(at + 1) % wall.ring.len()]))
+            })
+            .collect();
+        for midpoint in freed {
+            let [left, right] = fans[midpoint as usize][..] else {
+                continue;
+            };
+            if walls[left].kept || walls[right].kept {
+                continue;
+            }
+            let beside = |wall: &Wall| {
+                let len = wall.ring.len();
+                let at = wall.ring.iter().position(|&c| c == midpoint)?;
+                Some((
+                    at,
+                    wall.ring[(at + len - 1) % len],
+                    wall.ring[(at + 1) % len],
+                ))
+            };
+            let (Some((at_left, before, after)), Some((at_right, back, on))) =
+                (beside(&walls[left]), beside(&walls[right]))
+            else {
+                continue;
+            };
+            let whole = edge_key(before, after);
+            if back != after
+                || on != before
+                || walls[left].ring.len() < 4
+                || walls[right].ring.len() < 4
+                || edges.contains(&whole)
+            {
+                continue;
+            }
+            let mut rings = [walls[left].ring.clone(), walls[right].ring.clone()];
+            rings[0].remove(at_left);
+            rings[1].remove(at_right);
+            let triangles: [Vec<[Vec3; 3]>; 2] =
+                rings.clone().map(|ring| gauge.drawn(&ring).collect());
+            // Each column goes to whichever face its line meets nearer.
+            let mut owners: [Vec<u32>; 2] = [Vec::new(), Vec::new()];
+            let mut held = true;
+            for &column in walls[left]
+                .covered
+                .iter()
+                .chain(&walls[right].covered)
+                .chain(std::iter::once(&midpoint))
+            {
+                let near = |side: usize| gauge.crossing(&triangles[side], column);
+                let side = match (near(0), near(1)) {
+                    (Some(a), Some(b)) => usize::from(b.0.abs() < a.0.abs()),
+                    (Some(_), None) => 0,
+                    (None, Some(_)) => 1,
+                    (None, None) => {
+                        held = false;
+                        break;
+                    }
+                };
+                if !gauge.holds(&triangles[side], &[column]) {
+                    held = false;
+                    break;
+                }
+                owners[side].push(column);
+            }
+            if !held || !triangles.iter().all(|triangles| gauge.clear(triangles)) {
+                continue;
+            }
+            edges.insert(whole);
+            let [left_ring, right_ring] = rings;
+            let [left_owned, right_owned] = owners;
+            walls[left].from.remove(at_left);
+            walls[right].from.remove(at_right);
+            walls[left].ring = left_ring;
+            walls[right].ring = right_ring;
+            walls[left].covered = left_owned;
+            walls[right].covered = right_owned;
+        }
+    }
+    walls.retain(|wall| wall.alive);
+    walls
+}
+
+/// The body corner each corner of a ring was cut from, as
+/// [`Garment::corner_source`] holds them.
+type Corners = Vec<(u32, u8)>;
+
+/// The face a refinement pass quartered into `fan`, round `centre`, or `None`
+/// when the fan is not one: its ring, its corners' sources and the midpoints
+/// it shared with the faces beside it.
+fn unrefined(
+    walls: &[Wall],
+    fan: &[usize],
+    centre: u32,
+    source: &[u32],
+    subdivided: u32,
+) -> Option<(Vec<u32>, Corners, Vec<u32>)> {
+    if fan
+        .iter()
+        .any(|&face| !walls[face].alive || walls[face].kept)
+    {
+        return None;
+    }
+    // Each face's ring from just after the centre round to just before it.
+    let paths: Vec<(Vec<u32>, Corners)> = fan
+        .iter()
+        .map(|&face| {
+            let wall = &walls[face];
+            let len = wall.ring.len();
+            let at = wall.ring.iter().position(|&c| c == centre)?;
+            Some(
+                (1..len)
+                    .map(|step| (wall.ring[(at + step) % len], wall.from[(at + step) % len]))
+                    .unzip(),
+            )
+        })
+        .collect::<Option<_>>()?;
+    // Round the centre: each path ends where the next one starts.
+    let mut order = vec![0usize];
+    while order.len() < paths.len() {
+        let end = *paths[*order.last()?].0.last()?;
+        let next = (0..paths.len()).find(|&path| paths[path].0[0] == end)?;
+        if order.contains(&next) {
+            return None;
+        }
+        order.push(next);
+    }
+    if paths[*order.last()?].0.last() != paths[order[0]].0.first() {
+        return None;
+    }
+    let age = |column: u32| source[column as usize];
+    let midpoints: Vec<u32> = order.iter().map(|&path| paths[path].0[0]).collect();
+    let youngest = midpoints.iter().map(|&m| age(m)).max()?;
+    let oldest = midpoints.iter().map(|&m| age(m)).min()?;
+    if youngest >= age(centre) || oldest < subdivided {
+        return None;
+    }
+    // Between two midpoints, exactly one corner older than all of them, and
+    // anything else a later pass took into the side - younger than the centre.
+    for &path in &order {
+        let ring = &paths[path].0;
+        let inside = ring.get(1..ring.len().checked_sub(1)?)?;
+        let corners = inside.iter().filter(|&&c| age(c) < oldest).count();
+        if corners != 1
+            || inside
+                .iter()
+                .any(|&c| (oldest..=age(centre)).contains(&age(c)))
+        {
+            return None;
+        }
+    }
+    let mut ring = Vec::new();
+    let mut corners = Vec::new();
+    for &path in &order {
+        let (columns, from) = &paths[path];
+        ring.extend_from_slice(&columns[..columns.len() - 1]);
+        corners.extend_from_slice(&from[..from.len() - 1]);
+    }
+    let mut seen = ring.clone();
+    seen.sort_unstable();
+    seen.dedup();
+    (seen.len() == ring.len()).then_some((ring, corners, midpoints))
+}
+
+/// The box round `points`, or `None` when there are none.
+fn bounds<'a>(points: impl Iterator<Item = &'a Vec3>) -> Option<(Vec3, Vec3)> {
+    points.fold(None, |bounds, &point| {
+        Some(bounds.map_or((point, point), |(low, high): (Vec3, Vec3)| {
+            (low.min(point), high.max(point))
+        }))
+    })
+}
+
+/// Whether two triangles cut through each other: an edge of either crosses
+/// the other inside both.
+fn cut_through(a: &[Vec3; 3], b: &[Vec3; 3]) -> bool {
+    let edge_crosses = |triangle: &[Vec3; 3], edges: &[Vec3; 3]| {
+        let [p, q, r] = *triangle;
+        let normal = (q - p).cross(r - p);
+        (0..3).any(|at| {
+            let (from, to) = (edges[at], edges[(at + 1) % 3]);
+            let (above, below) = ((from - p).dot(normal), (to - p).dot(normal));
+            if above * below >= 0.0 {
+                return false;
+            }
+            let hit = from + (to - from) * (above / (above - below));
+            // Inside when the hit is on the same side of all three edges.
+            let sides = [(p, q), (q, r), (r, p)].map(|(s, e)| (e - s).cross(hit - s).dot(normal));
+            sides.iter().all(|&side| side > 0.0) || sides.iter().all(|&side| side < 0.0)
+        })
+    };
+    edge_crosses(a, b) || edge_crosses(b, a)
 }
 
 /// Which covered faces use each edge, as `(face, position)` within [`Garment::cut`]'s

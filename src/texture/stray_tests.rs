@@ -169,7 +169,7 @@ pub(super) fn read(
     mouth: &[f32],
     size: u32,
 ) -> Reading {
-    let (geometry, _) = draw(mesh, uv, parts, mouth, size);
+    let (geometry, _) = draw(mesh, uv, parts, mouth, size, false);
     let count = (size * size) as usize;
     let scale = Vec2::splat(size as f32);
     let each = |corners: &Corners, visit: &mut dyn FnMut(usize, Vec2, &[Vec2; 3])| {
@@ -194,7 +194,7 @@ pub(super) fn read(
     // within reach.
     let mut nearest = vec![f32::INFINITY; count];
     let mut sharp = vec![180.0f32; count];
-    triangles(mesh, uv, parts, mouth, size, |_, corners| {
+    triangles(mesh, uv, parts, mouth, size, true, |_, corners| {
         each(corners, &mut |at, point, pixels| {
             let (distance, _) = closest(pixels, point);
             if distance <= COVER + ROUNDING {
@@ -207,7 +207,7 @@ pub(super) fn read(
     // The best fit among the nearest triangles: (off / footprint, off,
     // footprint, bent).
     let mut best = vec![(f32::INFINITY, f32::INFINITY, 0.0f32, 0.0f32); count];
-    triangles(mesh, uv, parts, mouth, size, |_, corners| {
+    triangles(mesh, uv, parts, mouth, size, true, |_, corners| {
         each(corners, &mut |at, point, pixels| {
             let Some(baked) = geometry.texels[at] else {
                 return;
@@ -313,7 +313,7 @@ fn drawn(size: u32, all: &[Corners]) -> AtlasGeometry {
     for corners in all {
         rasterize(
             &mut geometry,
-            &mut measured,
+            Some(&mut measured),
             &mut ranks,
             Zone::Chest,
             false,

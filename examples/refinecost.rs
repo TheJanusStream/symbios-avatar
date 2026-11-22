@@ -16,7 +16,15 @@
 //! ```text
 //! cargo run --release --example refinecost           # the default body
 //! cargo run --release --example refinecost -- 7 23   # named seeds
+//! cargo run --release --example refinecost -- 207 --skull 1,1            # a seed at the long broad pin
+//! cargo run --release --example refinecost -- 2 --skull 1,1 --corner 0   # the sweep's dearest corner
 //! ```
+//!
+//! `--skull B,L` pins head breadth and face length as the budget sweeps pin
+//! them (`1,1` is their long broad head), and `--corner F` the composites as
+//! their lean, thin, tall corner at frame `F` does (#353): femininity `F`, mass
+//! -2, body fat at the bottom of its range, the tallest stature. Both apply to
+//! every seed named, after the roll, as `tests/budget.rs` applies them.
 //!
 //! **The bands are measured once, off the fully refined body, and then held.**
 //! A band defined per level would move as the head's own surface changed under
@@ -53,12 +61,18 @@ use symbios_avatar::{
 
 /// The largest number of passes the table walks to.
 ///
-/// `FACE_PASSES` has nine entries and the crate asks for all nine, so a row
-/// labelled 9 is the SHIPPED body and not one pass past it. Ten is one past:
-/// `refine_face` repeats its tightest region rather than widening again, so that
-/// row is what another pass over the mouth band would cost and buy — the
-/// question a refinement proposal otherwise has to answer by hand.
-const PASSES: usize = 11;
+/// `FACE_PASSES` has ten entries and the crate asks for all ten
+/// (`FACE_REFINEMENT`), so a row labelled 10 is the SHIPPED body and not one
+/// pass past it. Eleven is one past: `refine_face` repeats its LAST entry, which
+/// since #196 is the front of the mandible's border and not the mouth band, so
+/// that row is what another pass over the jaw's border would cost and buy.
+///
+/// **Keep this at the crate's pass count plus two.** It was 11 while the crate
+/// asked for nine, and stayed 11 when #196 made it ten (2026-08-12): every
+/// table after that measured its bands off a body one pass short of the
+/// shipped one, called that body shipped, and called the shipped one "one more
+/// pass over the tightest band" (found re-measuring for #189, 2026-11-22).
+const PASSES: usize = 12;
 
 /// The bands each row reports a cell for.
 ///
@@ -76,7 +90,37 @@ struct Band {
 
 fn main() {
     let args: Vec<String> = std::env::args().skip(1).collect();
-    let seeds: Vec<i64> = args.iter().filter_map(|arg| arg.parse().ok()).collect();
+    let mut seeds: Vec<i64> = Vec::new();
+    let mut skull: Option<(f32, f32)> = None;
+    let mut corner: Option<f32> = None;
+    let mut given = args.iter();
+    while let Some(arg) = given.next() {
+        match arg.as_str() {
+            "--skull" => {
+                let axes: Vec<f32> = given
+                    .next()
+                    .map(|spec| {
+                        spec.split(',')
+                            .filter_map(|a| a.trim().parse().ok())
+                            .collect()
+                    })
+                    .unwrap_or_default();
+                let [breadth, length] = axes[..] else {
+                    eprintln!("--skull takes headBreadth,faceLength");
+                    std::process::exit(2);
+                };
+                skull = Some((breadth, length));
+            }
+            "--corner" => {
+                let Some(frame) = given.next().and_then(|spec| spec.parse().ok()) else {
+                    eprintln!("--corner takes a place on the frame axis, -2 to 2");
+                    std::process::exit(2);
+                };
+                corner = Some(frame);
+            }
+            other => seeds.extend(other.parse::<i64>().ok()),
+        }
+    }
     let seeds = if seeds.is_empty() { vec![-1] } else { seeds };
 
     for seed in seeds {
@@ -84,10 +128,40 @@ fn main() {
         if seed >= 0 {
             record.reroll(seed);
         }
+        // Pinned after the roll and in the sweep's order (`swept_over` in
+        // tests/budget.rs), so a row here is the body a budget figure names.
+        if let Some(frame) = corner {
+            record.composites.femininity = frame;
+            record.composites.mass = -2.0;
+            record.composites.body_fat = symbios_avatar::plan::BODY_FAT_RANGE.0;
+        }
+        if let Archetype::Humanoid(params) = &mut record.archetype {
+            if let Some((breadth, length)) = skull {
+                params.head_breadth = breadth;
+                params.face_length = length;
+            }
+            if corner.is_some() {
+                params.height = symbios_avatar::plan::humanoid_height_range().1;
+            }
+        }
+        if skull.is_some() || corner.is_some() {
+            record.sanitize();
+        }
+        let mut label = if seed >= 0 {
+            format!("seed {seed}")
+        } else {
+            "the default body".to_string()
+        };
+        if let Some((breadth, length)) = skull {
+            label += &format!(" skull ({breadth}, {length})");
+        }
+        if let Some(frame) = corner {
+            label += &format!(" lean thin tall at frame {frame:+}");
+        }
         let skeleton = record.skeleton();
         let traits = HeadTraits::of(&record.composites);
         let Ok(cage) = build_cage(&skeleton, &CageConfig::default()) else {
-            println!("seed {seed} does not mesh");
+            println!("{label} does not mesh");
             continue;
         };
         let Ok(rig) = Rig::from_skeleton(&skeleton) else {
@@ -126,8 +200,8 @@ fn main() {
                 lateral: false,
             },
             // **Split above and below the line, because the finest pass may
-            // not cover both.** `FACE_PASSES`'s last band is 0.360 to 0.255 of
-            // a profile height, and a lip stack is taller than the band is: a
+            // not cover both.** `FACE_PASSES`'s tightest band is 0.360 to
+            // 0.255 of a profile height, and a lip stack is taller than the band is: a
             // single median over the whole mouth mixes cells the tightest pass
             // reached with cells it never touched, and reports the average of
             // two different surfaces as though it were one.
@@ -149,7 +223,7 @@ fn main() {
         ];
 
         println!(
-            "\n=== seed {seed} — head radius {:.1} mm, frame {:.1} mm, {} passes\n",
+            "\n=== {label} - head radius {:.1} mm, frame {:.1} mm, {} passes\n",
             radius * 1000.0,
             frame * 1000.0,
             PASSES - 2
@@ -186,11 +260,14 @@ fn main() {
             previous = tris;
         }
         println!(
-            "\n`tris` is the whole BODY's triangles, which is what the budget counts; `added` is \
-             this pass's own cost. Cells are millimetres, `across / down`: the median head-owned \
-             edge in the band running across the face and running down it. **Row 8 is the body \
-             the crate ships**; row 9 is one more pass over the tightest band, which is what \
-             `refine_face` does when it is asked for more than `FACE_PASSES` names."
+            "\n`tris` is the whole closed BODY's triangles after the face and neck refinement, \
+             before the chest's passes and the garment cut; `added` is this pass's own cost. \
+             Cells are millimetres, `across / down`: the median head-owned edge in the band \
+             running across the face and running down it. **Row {} is the body the crate \
+             ships**; row {} is one more pass over `FACE_PASSES`'s last entry, which is what \
+             `refine_face` does when it is asked for more than `FACE_PASSES` names.",
+            PASSES - 2,
+            PASSES - 1
         );
     }
 }

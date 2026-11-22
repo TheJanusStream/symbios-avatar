@@ -255,9 +255,9 @@ fn a_painted_beard_fades_over_texels_the_atlas_has() {
                 let Some(Some(there)) = geometry.texels.get(next) else {
                     continue;
                 };
-                let coarser = rolled.footprints[at].axes[0]
+                let coarser = rolled.footprints.read(geometry, at).axes[0]
                     .length()
-                    .max(rolled.footprints[next].axes[0].length());
+                    .max(rolled.footprints.read(geometry, next).axes[0].length());
                 if there.zone != Zone::Head
                     || (there.position - here.position).length() > 1.5 * coarser
                     || here.normal.dot(there.normal) < 0.9

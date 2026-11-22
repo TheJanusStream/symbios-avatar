@@ -499,6 +499,29 @@ pub struct Sowing<'a> {
 /// leftover is **3,358** - this ceiling fits it by 58, and the floor under it
 /// is still the 3,276 a helmet on seed 102's own face costs. The product
 /// corner, the greediest legal hair on that body, is 33,440.
+///
+/// **RE-ARGUED AT #489 and left at 3,300** (2026-11-21). The product corner
+/// was read off one fixed record, and that record was the dearest legal hair
+/// on two bodies only: on the dearest one a crop at droop 0 asks 4,738
+/// triangles of hair where it asked 3,304. This ceiling is why that never
+/// moved the corner - the tier grows about this much of any head and no more,
+/// a card head by rooting fewer clumps and a solid one by fitting whole (the
+/// most of a head it cannot thin is 2,934 over the swept bodies) - so the
+/// product is now argued as what it is: the dearest bald body plus this
+/// constant, 30,126 + 3,300 = 33,426 (seed 2 long broad, lean thin tall at
+/// frame 0, since generation 12's #486), against a leftover of 3,374. "About":
+/// `tiered` stops after `TIER_PASSES` with no final clamp, and under CI's
+/// libm that head's derived hair is tiered to 3,306, so the budget's product
+/// test carries a slack of 33 on this constant (`TIER_SLACK`, #492). The
+/// floor is what it was, 3,276: it is measured on rolled heads at their own
+/// cut, which #489 does not touch.
+///
+/// **LEFT AT 3,300 at milestone #16, by the owner's call** (2026-11-22).
+/// Round B took 9,002 triangles off the dearest bald body - 21,124 now, seed
+/// 2 as rolled, lean thin tall at frame 0 - and the owner banked them rather
+/// than give them to hair: the budget's target came down to 25,000 instead,
+/// leaving 3,876, which this ceiling spends 85 percent of. The product is
+/// 21,124 + 3,300 = 24,424.
 pub const MAX_TRIANGLES: usize = 3_300;
 
 /// How many times a head of hair is regrown to get under [`MAX_TRIANGLES`].

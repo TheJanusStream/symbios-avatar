@@ -511,9 +511,9 @@ fn resolvable_at(spacing: f32, cycles: f32) -> f32 {
     }
 }
 
-/// How far apart texel `index`, at `position`, lies from its neighbours on
-/// the skin, for the painted scalp's grain: its footprint's longer axis where
-/// the bake measured one (#473's second fixer), [`spacing_at`] elsewhere.
+/// How far apart texel `index`, `texel`, lies from its neighbours on the
+/// skin, for the painted scalp's grain: its footprint's longer axis where the
+/// bake measured one (#473's second fixer), [`spacing_at`] elsewhere.
 ///
 /// The step to a neighbouring texel is a property of the atlas, and at a
 /// chart's rim the neighbour across it is skin from somewhere else: the
@@ -525,13 +525,13 @@ fn scalp_spacing_at(
     geometry: &AtlasGeometry,
     footprints: Option<&Footprints>,
     index: usize,
-    position: Vec3,
+    texel: &super::bake::Texel,
 ) -> f32 {
     footprints
-        .and_then(|all| all.get(index))
+        .and_then(|all| all.get(index, texel.normal))
         .map(|footprint| footprint.axes[0].length())
         .filter(|spacing| *spacing > 0.0)
-        .unwrap_or_else(|| spacing_at(geometry, index, position))
+        .unwrap_or_else(|| spacing_at(geometry, index, texel.position))
 }
 
 /// The finest the painted scalp's grain is drawn at, by where on the head a
@@ -615,7 +615,7 @@ impl ScalpFloor {
             if !scalp(index, texel) || floor.share(texel.position - origin) >= 0.5 {
                 continue;
             }
-            let spacing = scalp_spacing_at(geometry, footprints, index, texel.position);
+            let spacing = scalp_spacing_at(geometry, footprints, index, texel);
             if spacing <= f32::EPSILON {
                 continue;
             }
@@ -844,13 +844,13 @@ pub(crate) fn paint_skin_with(
                 crate::hair::painted::Cover::of(follicle).is_some()
                     && hair.painted.of(follicle).shows()
             });
-            let footprint = footprints.and_then(|all| all.get(index));
+            let footprint = footprints.and_then(|all| all.get(index, texel.normal));
             let feather = bearded.then(|| {
                 feathered(
                     hair.follicles,
                     local,
                     texel.normal,
-                    footprint,
+                    footprint.as_ref(),
                     &Ragged {
                         field: &ragged_field,
                         reach: RAGGED * resolvable(RAGGED_ACROSS),
@@ -887,7 +887,7 @@ pub(crate) fn paint_skin_with(
                 // The scalp's grain no finer than the band round the back of
                 // the head beside it: see [`ScalpFloor`].
                 let resolved = if follicle == Follicle::Scalp {
-                    let spacing = scalp_spacing_at(geometry, footprints, index, p);
+                    let spacing = scalp_spacing_at(geometry, footprints, index, texel);
                     resolvable_at(spacing.max(scalp_floor.at(local)), grain.cells)
                 } else {
                     resolvable(grain.cells)

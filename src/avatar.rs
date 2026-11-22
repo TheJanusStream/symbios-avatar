@@ -509,7 +509,7 @@ impl Avatar {
         // the carve, the mouth cut and the built features all have to agree
         // about one mouth. See `FaceParams::on`.
         let face_params = record.face.on(&traits);
-        let (mut body, pushed) =
+        let (mut body, pushed, subdivided) =
             crate::build_body_pushed(&skeleton, &config.cage, config.subdivisions, &traits).ok()?;
         let mut rig = Rig::from_skeleton(&skeleton).ok()?;
         // A swelled chest earns its own refinement pass, here because the
@@ -534,9 +534,12 @@ impl Avatar {
         // bit-identical before and after the carve on every body measured, so
         // reading the canon from the uncarved head costs nothing.
         // The skull is kept rather than consumed: the follicle regions are cut
-        // from it too, and `Skull::measure` is 61% of a geometry build (#89) —
-        // so measuring a second one for the hair would be the single most
-        // expensive line in this function.
+        // from it too, and a measurement is not free - 4.4 ms of the default
+        // body's 556 ms geometry build (atlas 32), 5.2 of the budget sweep's
+        // dear corner's 956, measured 2026-11-21 after #89 took them down from
+        // 14.2 and 21.9. It was 61% of a geometry build when that build was
+        // 54 ms; the hair and the body now dwarf it, but a third call would
+        // still be a call for nothing.
         //
         // **A beast's head is not measured at all** (#367): its eyes are
         // seated with its skull, which its plan declared, and nothing else
@@ -610,6 +613,13 @@ impl Avatar {
         let mut beast =
             crown.map(|(head, joint)| face::beast::BeastFace::build(&rig, joint, head, &body));
 
+        // The corner field reads this body's own slit (#498): its bands are
+        // authored on the default's commissure, and the mouth-width axis puts
+        // a commissure anywhere from 0.54 to 1.65 times as far out.
+        let corner_scale = skin::corner_scale(mouth.as_ref().and_then(|mouth| {
+            let head = rig.in_zone(Zone::Head).first().copied()?;
+            Some(mouth.weld_side(&body.positions, rig.joints[head].position))
+        }));
         let mut weights = {
             let mut on_the_wall = body.clone();
             on_the_wall.positions[..wall.len()].copy_from_slice(&wall);
@@ -631,7 +641,7 @@ impl Avatar {
             for (at, push) in on_the_wall.positions.iter_mut().zip(&pushed) {
                 *at -= push.clamp_length_max(GROIN_BOUND_BACK);
             }
-            skin::bind_sided(&on_the_wall, &sides, &rig, &config.skin)
+            skin::bind_sided(&on_the_wall, &sides, &rig, &config.skin, corner_scale)
         };
         // The seam's own vertices leave the field's blend: the parting's two
         // edges are coincident at rest, so the field hands them identical
@@ -669,7 +679,12 @@ impl Avatar {
                         .iter()
                         .map(|&corner| {
                             (
-                                crate::rig::skin::corner_hold_at(&rig, corner, position),
+                                crate::rig::skin::corner_hold_at(
+                                    &rig,
+                                    corner,
+                                    position,
+                                    corner_scale,
+                                ),
                                 corner.0,
                             )
                         })
@@ -691,9 +706,49 @@ impl Avatar {
                 for &vertex in mouth.roof.iter().chain(&mouth.teeth) {
                     weights.vertices[vertex as usize] = solely(head);
                 }
+                // **The lower lip lets go of the jaw toward the welds** (#498).
+                // What the corner leaves is split between jaw and skull: the
+                // jaw's part is the field's own wherever the field already
+                // gives it, and all of it wherever `mouth::parting` does - all
+                // across the middle of the slit, easing to none at the weld,
+                // which keeps the field's blend. Jaw-held outright to the
+                // weld's neighbour (#154 until #498), the opening's edge stood
+                // 5 mm open one cell from a weld that does not move, at 14
+                // degrees on the default. The same rule at the same distance
+                // across holds the edge and the skin under it, so nothing
+                // shears between them (#154), and past the weld it is the
+                // field's to the last vertex, so the band's edge is seamless.
+                let centre = rig.joints[head].position;
                 for &vertex in mouth.lower.iter().chain(&mouth.lip) {
-                    weights.vertices[vertex as usize] =
-                        held_with_corner(pivot, body.positions[vertex as usize]);
+                    let position = body.positions[vertex as usize];
+                    let bound = &weights.vertices[vertex as usize];
+                    let of = |joint: usize| {
+                        bound
+                            .iter()
+                            .filter(|influence| influence.joint as usize == joint)
+                            .map(|influence| influence.weight)
+                            .sum::<f32>()
+                    };
+                    let (jaw, skull) = (of(pivot), of(head));
+                    let field = if jaw + skull > f32::EPSILON {
+                        jaw / (jaw + skull)
+                    } else {
+                        1.0
+                    };
+                    let parted =
+                        face::mouth::parting(mouth.along(&body.positions, centre, position));
+                    let share = 1.0 - (1.0 - parted) * (1.0 - field);
+                    let mut held = held_with_corner(pivot, position);
+                    let left = held[0].weight;
+                    held[0].weight = left * share;
+                    if share < 1.0 {
+                        held[2] = crate::rig::Influence {
+                            joint: head as u16,
+                            weight: left * (1.0 - share),
+                        };
+                    }
+                    held.sort_by(|a, b| b.weight.total_cmp(&a.weight));
+                    weights.vertices[vertex as usize] = held;
                 }
                 for &vertex in &mouth.floor {
                     weights.vertices[vertex as usize] = solely(pivot);
@@ -719,7 +774,11 @@ impl Avatar {
         // for it: the two differ by about a third at the head, and by a
         // different third on every body. Measured again here rather than reused
         // from above, because an ear is conformed to the surface it sits on and
-        // that surface now has a face carved into it.
+        // that surface now has a face carved into it. 4.8 ms on the default
+        // body (#89). Starting from the first measurement would buy little: the
+        // carve moves the very face the profiles are binned from, so all that
+        // carries over is which bone owns each vertex it left alone - a share
+        // of the 1.3 ms the sampling costs.
         let skull = rig
             .anatomy
             .human_head()
@@ -838,6 +897,10 @@ impl Avatar {
         } else {
             Outfit::default()
         };
+        // Each garment's inner wall without the refinement passes' cells,
+        // wherever the skin over it is not drawn: no camera reaches it there,
+        // and a refined chest was paid for on both shells (#493).
+        outfit.thin_inner(subdivided);
         let body_uvs = charts.by_source(body.vertex_count());
         for garment in &mut outfit.garments {
             garment.chart(&body_uvs);
@@ -878,10 +941,28 @@ impl Avatar {
             }
             inside
         };
-        // And how much skin each texel spans, which the painter feathers a
-        // beard's edge by (#432).
-        let (geometry, footprints) =
-            texture::bake::bake_measured(&body, &charts, &borrowed, &inside, config.atlas);
+        // A beast and a winged body wear a coat or plumage, painted from its
+        // loci (#368, #423); every other body a skin, painted from its
+        // complexion.
+        let coated = matches!(
+            record.archetype,
+            crate::plan::Archetype::Quadruped(_) | crate::plan::Archetype::Winged(_)
+        );
+        // And, for a skin, how much skin each texel spans, which the painter
+        // feathers a beard's edge by (#432). **Only for a skin** (#477): a
+        // coat and a plumage read no footprint, and a creature's head is a
+        // large share of its atlas - measured, a winged body's footprints
+        // held up to 14 MB in the web worker Overlands builds it in, a
+        // beast's 9 MB, for nothing. Their peak resident memory over a build
+        // fell by as much: winged roll 14 from 95.5 to 83.4 MB, beast 8 from
+        // 90.0 to 82.1. (Dropping the bake's buffers as soon as the painter
+        // is done buys nothing more: the peak is while it paints.)
+        let (geometry, footprints) = if coated {
+            let geometry = texture::bake::bake(&body, &charts, &borrowed, &inside, config.atlas);
+            (geometry, texture::bake::Footprints::default())
+        } else {
+            texture::bake::bake_measured(&body, &charts, &borrowed, &inside, config.atlas)
+        };
         // A beast's palate (#367): the head's skin its shut jaw covers, which
         // an open one shows, tinted as the inside of a mouth. **By vertex,
         // not in the atlas**: the palate shares its chart with the cheek and
@@ -938,11 +1019,7 @@ impl Avatar {
         // A beast wears a coat painted from its loci (#368), a person a skin
         // painted from its complexion.
         // The body a beast's coat and fur read (#368, #369).
-        let anatomy = matches!(
-            record.archetype,
-            crate::plan::Archetype::Quadruped(_) | crate::plan::Archetype::Winged(_)
-        )
-        .then(|| {
+        let anatomy = coated.then(|| {
             let mut anatomy = texture::coat::CoatBody::of(
                 &rig,
                 skeleton.beast_head.as_ref(),
@@ -2016,6 +2093,307 @@ mod tests {
                  corner should stretch, not fly",
                 rest * 1000.0,
                 corner * 1000.0
+            );
+        }
+    }
+
+    /// The bodies #498 judged its open mouth on: the default, five rolls
+    /// (6 bearded, 29 full-lipped) and both ends of the mouth-width axis,
+    /// whose welds stand from 0.12 to 0.37 of the head's horizontal reach.
+    fn open_mouths() -> Vec<(String, Avatar)> {
+        let mut bodies: Vec<(String, AvatarRecord)> = vec![(
+            "the default".into(),
+            AvatarRecord::new("Mouthed", Archetype::default()),
+        )];
+        for seed in [1i64, 6, 7, 21, 29] {
+            let mut record = AvatarRecord::new("Mouthed", Archetype::default());
+            record.reroll(seed);
+            bodies.push((format!("seed {seed}"), record));
+        }
+        for width in [-1.0f32, 2.0] {
+            let mut record = AvatarRecord::new("Mouthed", Archetype::default());
+            record.face.mouth_width = width;
+            record.sanitize();
+            bodies.push((format!("mouth width {width}"), record));
+        }
+        bodies
+            .into_iter()
+            .map(|(label, record)| {
+                let avatar = Avatar::build(&record).expect("a biped builds");
+                (label, avatar)
+            })
+            .collect()
+    }
+
+    /// `avatar`'s body with its jaw opened `degrees`.
+    fn jaw_opened(avatar: &Avatar, degrees: f32) -> Vec<Vec3> {
+        let rig = &avatar.rig;
+        let pivot = crate::rig::skin::jaw_pivot(rig).expect("a person has a jaw");
+        let mut pose = crate::anim::Pose::rest(rig);
+        pose.rotations[pivot] = glam::Quat::from_rotation_x(degrees.to_radians());
+        pose.forward(rig)
+            .deform(rig, &avatar.parts.body.positions, &avatar.parts.weights)
+    }
+
+    #[test]
+    fn an_open_mouth_is_a_lens_from_weld_to_weld() {
+        // #498. The opening's lower edge, read from the front as a polyline -
+        // weld, the lower seam left to right, weld - at speech (12 degrees,
+        // `TalkConfig::open`), at 14 and at the 20-degree yawn. Three things a
+        // lens has and the trapezoid did not:
+        // * no sharp turn. The corner field took 0.72 from the jaw over 7 mm
+        //   inside the slit and the lip was the jaw's outright to the weld's
+        //   neighbour, so the edge ran flat, turned up a wall, ran along a
+        //   0.28 shelf and turned again into the weld: 62 to 90 degrees at a
+        //   single vertex on every body here. Now 9.5 to 26, and 33 to 41 on
+        //   the narrowest mouth, a deep U drawn in nine cells a side;
+        // * it closes into the commissure: one cell from a weld the trapezoid
+        //   stood 0.23 to 0.96 as open as its middle (the shelf, or on the
+        //   narrowest mouth almost the whole drop), and the lens 0.02 to 0.07;
+        // * it deepens toward the middle and never rises on the way.
+        for (label, avatar) in open_mouths() {
+            let mouth = avatar
+                .parts
+                .mouth
+                .as_ref()
+                .unwrap_or_else(|| panic!("{label}: no mouth was cut"));
+            for degrees in [12.0f32, 14.0, 20.0] {
+                let moved = jaw_opened(&avatar, degrees);
+                let edge: Vec<Vec3> = std::iter::once(mouth.welds[0])
+                    .chain(mouth.lower.iter().copied())
+                    .chain(std::iter::once(mouth.welds[1]))
+                    .map(|vertex| moved[vertex as usize])
+                    .collect();
+                let heading = |from: Vec3, to: Vec3| (to.y - from.y).atan2(to.x - from.x);
+                let sharpest = edge
+                    .windows(3)
+                    .map(|run| {
+                        let turn = (heading(run[1], run[2]) - heading(run[0], run[1])).abs();
+                        turn.min(std::f32::consts::TAU - turn).to_degrees()
+                    })
+                    .fold(0.0f32, f32::max);
+                let gaps: Vec<f32> = mouth
+                    .upper
+                    .iter()
+                    .zip(&mouth.lower)
+                    .map(|(&upper, &lower)| moved[upper as usize].y - moved[lower as usize].y)
+                    .collect();
+                let (deepest, widest) = gaps
+                    .iter()
+                    .copied()
+                    .enumerate()
+                    .max_by(|a, b| a.1.total_cmp(&b.1))
+                    .expect("a seam");
+                let rise = gaps[deepest..]
+                    .windows(2)
+                    .map(|pair| pair[1] - pair[0])
+                    .chain(gaps[..=deepest].windows(2).map(|pair| pair[0] - pair[1]))
+                    .fold(0.0f32, f32::max);
+                let closing = gaps[0].max(gaps[gaps.len() - 1]) / widest.max(f32::EPSILON);
+                println!(
+                    "{label} at {degrees} degrees: {:.1} mm open, sharpest turn {sharpest:.1} \
+                     degrees, {closing:.3} as open one cell from a weld, rising {:.2} mm",
+                    widest * 1000.0,
+                    rise * 1000.0
+                );
+                assert!(
+                    sharpest < 50.0,
+                    "{label} at {degrees} degrees: the opening's lower edge turns {sharpest:.1} \
+                     degrees at one vertex - a corner, not a lens (the trapezoid turned 62 to 90)"
+                );
+                assert!(
+                    closing < 0.12,
+                    "{label} at {degrees} degrees: one cell from a weld the mouth is {closing:.3} as \
+                     open as its middle - it does not close into the commissure"
+                );
+                assert!(
+                    rise < 0.00005,
+                    "{label} at {degrees} degrees: the opening rises {:.2} mm on its way from the \
+                     middle to a weld",
+                    rise * 1000.0
+                );
+            }
+        }
+    }
+
+    /// The skin on the lower lip's side of `avatar`'s parting: walked from
+    /// the lower seam, never across the upper seam, a weld or the pocket,
+    /// frontal, out to `across` times the slit's half-width and down to
+    /// `down` head radii under the lower weld.
+    fn under_the_opening(
+        avatar: &Avatar,
+        across: f32,
+        down: f32,
+    ) -> std::collections::HashSet<u32> {
+        let mouth = avatar.parts.mouth.as_ref().expect("a mouth was cut");
+        let rig = &avatar.rig;
+        let body = &avatar.parts.body;
+        let head = *rig.in_zone(Zone::Head).first().expect("a head");
+        let (centre, radius) = (rig.joints[head].position, rig.joints[head].radius);
+        let welds = mouth.welds.map(|weld| body.positions[weld as usize]);
+        let half = 0.5 * ((welds[0].x - centre.x).abs() + (welds[1].x - centre.x).abs());
+        let floor = welds[0].y.min(welds[1].y) - down * radius;
+        let barrier: std::collections::HashSet<u32> = mouth
+            .upper
+            .iter()
+            .chain(&mouth.welds)
+            .chain(&mouth.roof)
+            .chain(&mouth.teeth)
+            .chain(&mouth.floor)
+            .copied()
+            .collect();
+        let window = |vertex: u32| {
+            let at = body.positions[vertex as usize];
+            at.z > centre.z && (at.x - centre.x).abs() <= across * half && at.y >= floor
+        };
+        let mut adjacent: std::collections::HashMap<u32, Vec<u32>> =
+            std::collections::HashMap::new();
+        for face in &body.faces {
+            for at in 0..face.len() {
+                let (a, b) = (face[at], face[(at + 1) % face.len()]);
+                adjacent.entry(a).or_default().push(b);
+                adjacent.entry(b).or_default().push(a);
+            }
+        }
+        let mut under: std::collections::HashSet<u32> =
+            mouth.lower.iter().copied().filter(|&v| window(v)).collect();
+        let mut queue: Vec<u32> = under.iter().copied().collect();
+        while let Some(here) = queue.pop() {
+            for &next in adjacent.get(&here).map_or(&[][..], Vec::as_slice) {
+                if !barrier.contains(&next) && window(next) && under.insert(next) {
+                    queue.push(next);
+                }
+            }
+        }
+        under
+    }
+
+    #[test]
+    fn the_middle_of_the_lower_lip_follows_the_jaw_to_the_chin() {
+        // #498's notch. Across the middle half of the slit, where the lower
+        // lip takes all of the jaw's motion (`face::mouth::parting`), the
+        // skin under the opening carries none of the skull's, down to a
+        // quarter of a radius under the welds - the lip, the sulcus under it
+        // and the top of the chin. The lip band stopped at 0.10 of a radius
+        // until #498, and on seed 29's full lips the row 0.107 down was the
+        // mandible field's: held 0.33 by the skull on the midline while the
+        // lip above it dropped whole, it stayed behind as a dark notch.
+        for (label, avatar) in open_mouths() {
+            let rig = &avatar.rig;
+            let head = *rig.in_zone(Zone::Head).first().expect("a head");
+            let under = under_the_opening(&avatar, 0.5, 0.25);
+            assert!(
+                under.len() > 100,
+                "{label}: {} vertices under the middle of the opening - the walk, not the skin",
+                under.len()
+            );
+            let worst = under
+                .iter()
+                .map(|&vertex| {
+                    let held = avatar.parts.weights.vertices[vertex as usize]
+                        .iter()
+                        .filter(|influence| influence.joint as usize == head)
+                        .map(|influence| influence.weight)
+                        .sum::<f32>();
+                    (
+                        held,
+                        avatar.parts.body.positions[vertex as usize] - rig.joints[head].position,
+                    )
+                })
+                .max_by(|a, b| a.0.total_cmp(&b.0))
+                .expect("skin under the opening");
+            println!(
+                "{label}: the skull holds {:.3} of the skin under the middle of the opening at most \
+                 ({} vertices)",
+                worst.0,
+                under.len()
+            );
+            assert!(
+                worst.0 < 0.02,
+                "{label}: the skull holds {:.3} of the skin at {:+.1} mm across and {:+.1} mm up \
+                 from the head joint, under the middle of the opening - it stays while the lip \
+                 drops",
+                worst.0,
+                worst.1.x * 1000.0,
+                worst.1.y * 1000.0
+            );
+        }
+    }
+
+    #[test]
+    fn the_skin_under_an_open_mouth_has_no_wall() {
+        // #498's cliff: below the opening, the lower lip and the skin under it
+        // dropped as one block while the skin beside it stayed, a wall running
+        // down from each end of the trapezoid's flat bottom toward the chin.
+        // Read at 14 degrees over the skin on the lip's side of the parting -
+        // walked from the lower seam, never across the upper seam, a weld or
+        // the pocket - out to 1.25 times the slit's half-width and down to
+        // 0.14 of a radius under the welds: across every near-horizontal edge,
+        // how much farther one end dropped than the other per millimetre
+        // across, against the opening's own drop per millimetre of half-width
+        // (a lens's sides are as steep as its depth over its width, and a wall
+        // is steeper). 3.2 to 8.9 before #498 on these bodies; 2.4 to 2.6 now.
+        for (label, avatar) in open_mouths() {
+            let mouth = avatar
+                .parts
+                .mouth
+                .as_ref()
+                .unwrap_or_else(|| panic!("{label}: no mouth was cut"));
+            let rig = &avatar.rig;
+            let body = &avatar.parts.body;
+            let head = *rig.in_zone(Zone::Head).first().expect("a head");
+            let centre = rig.joints[head].position;
+            let welds = mouth.welds.map(|weld| body.positions[weld as usize]);
+            let half = 0.5 * ((welds[0].x - centre.x).abs() + (welds[1].x - centre.x).abs());
+            let moved = jaw_opened(&avatar, 14.0);
+            let widest = mouth
+                .upper
+                .iter()
+                .zip(&mouth.lower)
+                .map(|(&upper, &lower)| moved[upper as usize].y - moved[lower as usize].y)
+                .fold(0.0f32, f32::max);
+            let aspect = widest / half;
+
+            let under = under_the_opening(&avatar, 1.25, 0.14);
+            assert!(
+                under.len() > 200,
+                "{label}: {} vertices under the opening - the walk, not the skin",
+                under.len()
+            );
+
+            let mut steepest = (0.0f32, Vec3::ZERO);
+            for face in &body.faces {
+                for at in 0..face.len() {
+                    let (a, b) = (face[at], face[(at + 1) % face.len()]);
+                    if !under.contains(&a) || !under.contains(&b) {
+                        continue;
+                    }
+                    let (pa, pb) = (body.positions[a as usize], body.positions[b as usize]);
+                    let (across, up) = ((pa.x - pb.x).abs(), (pa.y - pb.y).abs());
+                    if across < 0.0002 || across < 2.0 * up {
+                        continue;
+                    }
+                    let drop = |vertex: u32, at: Vec3| at.y - moved[vertex as usize].y;
+                    let shear = (drop(a, pa) - drop(b, pb)).abs() / across / aspect;
+                    if shear > steepest.0 {
+                        steepest = (shear, (pa + pb) * 0.5 - centre);
+                    }
+                }
+            }
+            println!(
+                "{label}: the skin under the opening shears {:.2} at the steepest, {:+.1} mm \
+                 across and {:+.1} mm up from the head joint",
+                steepest.0,
+                steepest.1.x * 1000.0,
+                steepest.1.y * 1000.0
+            );
+            assert!(
+                steepest.0 < 3.0,
+                "{label}: the skin under an open mouth drops {:.2} times as steeply across as the \
+                 opening does, at {:+.1} mm across and {:+.1} mm up from the head joint - a wall",
+                steepest.0,
+                steepest.1.x * 1000.0,
+                steepest.1.y * 1000.0
             );
         }
     }

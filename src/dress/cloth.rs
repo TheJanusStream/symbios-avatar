@@ -625,9 +625,7 @@ impl Canvas {
         let mesh = &garment.mesh;
         let normals = mesh.vertex_normals();
         let scale = self.side as f32;
-        // Outer shell faces are the even ones before the rims: each covered
-        // body face pushed its outer face and then its inner one.
-        for face in (0..garment.claim.len()).map(|covered| covered * 2) {
+        for face in garment.outer_faces() {
             let (Some(corners), Some(sources)) =
                 (mesh.faces.get(face), garment.corner_source.get(face))
             else {
@@ -1111,7 +1109,7 @@ mod tests {
         let drawn = trousers.charted(&body.unwrap, &body.face_of);
         let scale = side as f32;
         let (mut inside, mut wrong) = (0usize, Vec::new());
-        for face in (0..trousers.claim.len()).map(|covered| covered * 2) {
+        for face in trousers.outer_faces() {
             let pixels: Vec<glam::Vec2> = drawn.faces[face]
                 .iter()
                 .map(|&vertex| drawn.uvs[vertex as usize] * scale)
@@ -1188,7 +1186,7 @@ mod tests {
         let trousers = &body.outfit.garments[0];
         assert!(trousers.texture.is_none(), "the trousers are drawn first");
         let drawn = trousers.charted(&body.unwrap, &body.face_of);
-        let rims = trousers.claim.len() * 2..trousers.mesh.faces.len();
+        let rims = trousers.rims();
         assert!(!rims.is_empty(), "the trousers have no rim");
         let (mut drawn_wrong, mut on_edge_wrong, mut samples) = (0, 0, 0);
         for face in rims {

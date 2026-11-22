@@ -77,6 +77,20 @@ impl Outfit {
         Self { garments }
     }
 
+    /// Builds every garment's inner wall again without the cells the body's
+    /// refinement passes split, where no skin over it is drawn - see
+    /// [`Garment::thin_inner`], which says what `subdivided` is (#493).
+    ///
+    /// A step of its own rather than part of [`Self::wear`], because only the
+    /// build knows where the body's subdivision ended and its refinement
+    /// began: a body handed to `wear` by anything else carries no record of
+    /// it, and a garment sewn on it keeps its whole inner wall.
+    pub fn thin_inner(&mut self, subdivided: usize) {
+        for garment in &mut self.garments {
+            garment.thin_inner(subdivided);
+        }
+    }
+
     /// Every garment as one mesh.
     ///
     /// For tools that want the whole outfit in one piece. Not a manifold: two
@@ -789,6 +803,153 @@ mod tests {
         assert!(trousers.texture.is_some());
         assert!(outfit.is_textured());
         assert_eq!(trousers.limbs, vec![Limb::HindLeft, Limb::HindRight]);
+    }
+
+    /// Each garment's faces in [`Garment::inner_faces`], as sets of corners,
+    /// so two walls can be compared whatever order their faces came in.
+    fn inner_rings(garment: &Garment) -> Vec<Vec<u32>> {
+        let mut rings: Vec<Vec<u32>> = garment.mesh.faces[garment.inner_faces()]
+            .iter()
+            .map(|face| {
+                let mut ring = face.clone();
+                ring.sort_unstable();
+                ring
+            })
+            .collect();
+        rings.sort();
+        rings
+    }
+
+    #[test]
+    fn a_thinned_inner_wall_changes_nothing_but_the_inner_wall() {
+        // **#493's contract.** Built as an avatar is built, so the body has
+        // refinement passes to undo: the default, the long broad pin on seed
+        // 207 (heavy, fat and feminine, the swelled chest's own refinement
+        // pass under its top) and the sweep's lean corner. Each outfit is cut
+        // again on the same body without the thinning, and everything a
+        // camera or the skin can tell apart has to match: the outer shell,
+        // the rims, every vertex, the claim, what is hidden and the hem. The
+        // inner wall over skin that is drawn - the hem's row - has to be all
+        // there, face for face, and the wall has to be a closed solid with
+        // fewer triangles than it had.
+        let mut bodies = vec![AvatarRecord::new("Thin", Archetype::default())];
+        for (seed, lean) in [(207i64, false), (2, true)] {
+            let mut record = AvatarRecord::new("Thin", Archetype::default());
+            record.reroll(seed);
+            if lean {
+                record.composites.femininity = 0.0;
+                record.composites.mass = -2.0;
+                record.composites.body_fat = crate::plan::BODY_FAT_RANGE.0;
+            }
+            if let Archetype::Humanoid(params) = &mut record.archetype {
+                params.head_breadth = 1.0;
+                params.face_length = 1.0;
+            }
+            record.sanitize();
+            bodies.push(record);
+        }
+        for record in &bodies {
+            let avatar = crate::Avatar::build_for_shape(record).expect("a person builds");
+            let parts = &avatar.parts;
+            let whole = Outfit::wear(
+                &parts.body,
+                &avatar.rig,
+                &parts.weights,
+                &parts.zones,
+                &record.outfit,
+            );
+            assert_eq!(whole.len(), parts.outfit.len());
+            let mut saved = 0;
+            for (thin, whole) in parts.outfit.garments.iter().zip(&whole.garments) {
+                assert!(
+                    thin.mesh.is_closed_manifold(),
+                    "{:?}",
+                    thin.mesh.manifold_report()
+                );
+                assert_eq!(thin.mesh.positions, whole.mesh.positions);
+                assert_eq!(thin.source, whole.source);
+                assert_eq!(thin.claim, whole.claim);
+                assert_eq!(thin.hidden, whole.hidden);
+                assert_eq!(thin.hem, whole.hem);
+                for range in [Garment::outer_faces, Garment::rims] {
+                    assert_eq!(thin.mesh.faces[range(thin)], whole.mesh.faces[range(whole)]);
+                    assert_eq!(
+                        thin.corner_source[range(thin)],
+                        whole.corner_source[range(whole)]
+                    );
+                }
+                let kept = inner_rings(thin);
+                let drawn: Vec<Vec<u32>> = whole
+                    .inner_faces()
+                    .zip(&whole.claim)
+                    .filter(|(_, face)| whole.hidden.binary_search(face).is_err())
+                    .map(|(at, _)| {
+                        let mut ring = whole.mesh.faces[at].clone();
+                        ring.sort_unstable();
+                        ring
+                    })
+                    .collect();
+                assert!(!drawn.is_empty());
+                for ring in &drawn {
+                    assert!(
+                        kept.binary_search(ring).is_ok(),
+                        "an inner face over drawn skin was thinned away: {ring:?}"
+                    );
+                }
+                let triangles = |garment: &Garment| -> usize {
+                    garment.mesh.faces[garment.inner_faces()]
+                        .iter()
+                        .map(|face| face.len() - 2)
+                        .sum()
+                };
+                assert!(triangles(thin) <= triangles(whole));
+                saved += triangles(whole) - triangles(thin);
+            }
+            assert!(saved > 0, "{}: thinning saved nothing", record.name);
+        }
+    }
+
+    #[test]
+    fn an_inner_wall_thinned_past_the_subdivision_is_still_a_closed_solid() {
+        // The test bodies here are the subdivided cage and nothing more, so
+        // thinning them down to the cage - `subdivided` of 0, which no build
+        // asks for - merges every face the guards allow, across every cut.
+        // Whatever it merges, the garment stays a closed solid and its outer
+        // shell, rims and hidden faces stay as sewn; and with no refinement to
+        // undo, thinning at the body's own vertex count changes nothing.
+        let (mut before, mut after) = (0, 0);
+        for seed in 1i64..=4 {
+            let (mesh, rig, weights, zones) = body(seed);
+            for (sleeve, leg) in [(0.0, SHORTS), (FOREARM, 1.0), (1.0, CALF)] {
+                let whole = Outfit::wear(&mesh, &rig, &weights, &zones, &cut(sleeve, leg));
+                let mut same = whole.clone();
+                same.thin_inner(mesh.vertex_count());
+                assert_eq!(same, whole, "seed {seed} {sleeve}/{leg}");
+                let mut thin = whole.clone();
+                thin.thin_inner(0);
+                for (thin, whole) in thin.garments.iter().zip(&whole.garments) {
+                    assert!(
+                        thin.mesh.is_closed_manifold(),
+                        "seed {seed} {sleeve}/{leg}: {:?}",
+                        thin.mesh.manifold_report()
+                    );
+                    assert_eq!(
+                        thin.mesh.faces[thin.outer_faces()],
+                        whole.mesh.faces[whole.outer_faces()]
+                    );
+                    assert_eq!(thin.mesh.faces[thin.rims()], whole.mesh.faces[whole.rims()]);
+                    assert_eq!(thin.hidden, whole.hidden);
+                    assert!(thin.inner_faces().len() <= whole.inner_faces().len());
+                    before += whole.inner_faces().len();
+                    after += thin.inner_faces().len();
+                }
+            }
+        }
+        println!("thinned to the cage: {before} inner faces became {after}");
+        assert!(
+            after < before,
+            "nothing was thinned, so this proved nothing"
+        );
     }
 
     #[test]

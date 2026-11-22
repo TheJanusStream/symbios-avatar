@@ -312,12 +312,19 @@ fn leaf_above_parent(rig: &Rig, joint: usize) -> bool {
 }
 
 /// [`face::skull::corner_hold`](crate::face::skull) at `position`, for one
-/// entry of [`mouth_corners`].
+/// entry of [`mouth_corners`], on a body whose slit is `scale` times as
+/// narrow as the default's - see [`corner_scale`].
 ///
 /// The ruler arithmetic lives here once — the below-joint drop off the
-/// neck→head pair, the azimuth cosines, the side sign — because two call
-/// sites computing it independently is how a seam and a field drift apart.
-pub(crate) fn corner_hold_at(rig: &Rig, corner: (usize, f32, usize), position: Vec3) -> f32 {
+/// neck→head pair, the azimuth cosines, the side sign, the slit's scale —
+/// because two call sites computing it independently is how a seam and a
+/// field drift apart.
+pub(crate) fn corner_hold_at(
+    rig: &Rig,
+    corner: (usize, f32, usize),
+    position: Vec3,
+    scale: f32,
+) -> f32 {
     let (_, sign, head) = corner;
     let Some(neck) = rig.joints[head].parent else {
         return 0.0;
@@ -329,7 +336,24 @@ pub(crate) fn corner_hold_at(rig: &Rig, corner: (usize, f32, usize), position: V
     if reach <= f32::EPSILON {
         return 0.0;
     }
-    skull::corner_hold(drop, across.z / reach, across.x / reach * sign)
+    skull::corner_hold(drop, across.z / reach, across.x / reach * sign, scale)
+}
+
+/// How much narrower than the default body's this body's slit is: the
+/// factor the corner field reads its slit-tied bands at, so they land on
+/// this mouth's own commissure (#498). One when no mouth was
+/// cut - a beast, or a person whose cut declined - which reads the field as
+/// the default body does.
+///
+/// `weld` is the azimuth sine the slit's welds stand at off the head joint,
+/// averaged over the two sides. Bounded to the factor the mouth-width
+/// axis's own ends ask for (0.61 at the widest, 1.84 at the narrowest)
+/// with some room, so a degenerate weld cannot fold the field onto the
+/// midline.
+#[must_use]
+pub(crate) fn corner_scale(weld: Option<f32>) -> f32 {
+    weld.filter(|weld| weld.is_finite() && *weld > f32::EPSILON)
+        .map_or(1.0, |weld| (skull::CORNER_WELD / weld).clamp(0.5, 2.5))
 }
 
 /// Computes skin weights binding `mesh` to `rig`.
@@ -343,9 +367,17 @@ pub(crate) fn corner_hold_at(rig: &Rig, corner: (usize, f32, usize), position: V
 /// one of them. Binding against a bone with no capsule behind it does not fail
 /// loudly; it quietly attaches a patch of skin to something that was never
 /// meant to move it.
+///
+/// **A person's mouth-corner and jaw fields are placed on the default body's
+/// commissure here.** A build binds its body knowing where its own mouth's
+/// welds stand, and scales those fields to that slit (#498); this function
+/// knows no mouth, so on a person whose mouth is wider or narrower than the
+/// default its weights round the mouth differ from the ones
+/// [`crate::Avatar::build`] binds. Beasts and winged bodies have neither field
+/// and bind the same either way.
 #[must_use]
 pub fn bind(mesh: &PolyMesh, rig: &Rig, config: &SkinConfig) -> SkinWeights {
-    bind_sided(mesh, &[], rig, config)
+    bind_sided(mesh, &[], rig, config, 1.0)
 }
 
 /// [`bind`], reading which part of the body each vertex is ON at `sides`
@@ -355,11 +387,15 @@ pub fn bind(mesh: &PolyMesh, rig: &Rig, config: &SkinConfig) -> SkinWeights {
 /// that weigh each bone are measured from `mesh`, but which limb the vertex
 /// belongs to - and so which limbs' bones the cross-limb gate lets hold it -
 /// is the place it really is.
+///
+/// `corner_scale` is [`corner_scale`]'s answer for the mouth cut into
+/// `mesh`, so the corner field lands on that mouth's commissure (#498).
 pub(crate) fn bind_sided(
     mesh: &PolyMesh,
     sides: &[Vec3],
     rig: &Rig,
     config: &SkinConfig,
+    corner_scale: f32,
 ) -> SkinWeights {
     let vertices = mesh.positions.len();
     let joints = rig.len();
@@ -591,7 +627,8 @@ pub(crate) fn bind_sided(
             let across = Vec3::new(position.x - crest.x, 0.0, position.z - crest.z);
             let reach = across.length();
             if reach > f32::EPSILON {
-                let hold = skull::mandible_hold(drop, across.z / reach, across.x / reach);
+                let hold =
+                    skull::mandible_hold(drop, across.z / reach, across.x / reach, corner_scale);
                 if hold > 0.0 {
                     let taken = hold * (row[head] + row[neck]);
                     row[head] *= 1.0 - hold;
@@ -608,7 +645,7 @@ pub(crate) fn bind_sided(
         // head-held above and jaw-held below (#154), and a corner that moved
         // one edge without the other would tear the mouth at its own corner.
         for &corner in &corners {
-            let hold = corner_hold_at(rig, corner, position);
+            let hold = corner_hold_at(rig, corner, position, corner_scale);
             if hold > 0.0 {
                 let (joint, _, head) = corner;
                 let mut taken = hold * row[head];
@@ -1549,8 +1586,10 @@ mod tests {
         // * each CORNER patch must travel — the lever from the pivot to the
         //   commissure is ~16 mm on the default, capped at 0.72;
         // * the PHILTRUM must not: the pose's lift is proportional to x off
-        //   the pivot, and the field dies by side 0.10, so the midline is
-        //   protected twice over — this asserts both protections survived;
+        //   the pivot, and the field dies by side 0.02 (0.10 until #498 spread
+        //   its rise over the slit), so the midline is protected twice over —
+        //   this asserts both protections survived: 0.00 mm before #498, 0.04
+        //   after;
         // * the CHIN's midline must not — the field's height band ends well
         //   above it;
         // * the BROW band must not: a smile that raises the brows has crossed

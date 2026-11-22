@@ -140,6 +140,20 @@ pub struct Item<'a> {
     pub cutout: Option<Cutout<'a>>,
     /// How it responds to light.
     pub material: Material,
+    /// What `--pass wire` draws this item in, and whether it draws its
+    /// triangle edges at all: `Some` of a clay albedo for everything the
+    /// avatar draws, `None` for the backdrop, whose two triangles are not the
+    /// avatar's to spend and whose diagonal across the wall behind every view
+    /// would read as part of the figure.
+    ///
+    /// **Clay rather than the atlas, because the ink has to read on every
+    /// surface.** Over the painted body a dark line vanished into dark skin,
+    /// dark hair and dark cloth, and an ink that flipped to light over a dark
+    /// surface flipped across the terminator of a lit face, which drew half of
+    /// it as a white mask. Over clay one dark ink reads everywhere, and the
+    /// shading left is the curvature the pass is there to weigh the density
+    /// against.
+    pub wire: Option<Vec3>,
 }
 
 /// A cut: texture coordinates into a mask whose alpha says whether the surface
@@ -237,7 +251,34 @@ pub struct GBuffer {
     /// at one pixel on a buffer a sixteenth the size drops every face of a
     /// 3.6 mm cell - the whole face, seen from above, opening onto the mouth.
     pub floor: f32,
+    /// How much of each pixel the drawn triangle's own edges cover, `0..=1`,
+    /// for `--pass wire` (#308), or `None` when the pass is not asked for.
+    ///
+    /// **Off unless asked for, and then it touches nothing else.** The other
+    /// buffers are written exactly as they always were, so every other output
+    /// is the same bytes whether this exists or not. With it, each item is
+    /// drawn in its [`Item::wire`] clay on its smooth normals, with no atlas
+    /// relief, lit as the plain sheet is lit, and the wire is drawn over the
+    /// finished picture.
+    ///
+    /// Taken from the triangle that WON the pixel, so an edge is only drawn
+    /// where its surface is seen: a hidden triangle's edges never reach the
+    /// picture through the one in front of it. A polygon's own edges are
+    /// drawn at full strength and the diagonals its fan splits it along at
+    /// [`DIAGONAL`], so the quads still read as quads and the triangles the
+    /// budget counts are still all there.
+    pub wire: Option<Vec<f32>>,
 }
+
+/// Half the width of a wire line, in buffer pixels: the line is about 0.6 of
+/// a finished pixel across at the sheets' supersample of 2, thin enough that a
+/// cell three finished pixels wide still reads open.
+const WIRE_HALF: f32 = 0.6;
+
+/// How strongly a fan diagonal is drawn, against a polygon edge's 1. A quad's
+/// two triangles cost the budget two, so the diagonal is shown, but faintly
+/// enough that the grid the refinement laid down stays the thing that reads.
+const DIAGONAL: f32 = 0.4;
 
 impl GBuffer {
     /// An empty buffer, everything at the far plane.
@@ -253,6 +294,7 @@ impl GBuffer {
             finish: vec![Vec3::new(1.0, 0.0, 0.0); pixels],
             covered: vec![false; pixels],
             floor: 1.0,
+            wire: None,
         }
     }
 
@@ -269,16 +311,29 @@ impl GBuffer {
                 }
             };
             for face in item.faces {
+                let last = face.len().saturating_sub(2);
                 for corner in 1..face.len().saturating_sub(1) {
                     let tri = [face[0], face[corner], face[corner + 1]];
-                    self.triangle(item, normals, tri, &camera);
+                    // Which of the triangle's edges, each named by the corner
+                    // opposite it, are the polygon's own rather than a fan
+                    // diagonal: the one opposite the fan's hub always is, and
+                    // the two through the hub only at the fan's ends.
+                    let outline = [true, corner == last, corner == 1];
+                    self.triangle(item, normals, tri, outline, &camera);
                 }
             }
         }
     }
 
     /// Rasterises one triangle.
-    fn triangle(&mut self, item: &Item, normals: &[Vec3], tri: [u32; 3], camera: &Mat4) {
+    fn triangle(
+        &mut self,
+        item: &Item,
+        normals: &[Vec3],
+        tri: [u32; 3],
+        outline: [bool; 3],
+        camera: &Mat4,
+    ) {
         let world = tri.map(|at| item.positions[at as usize]);
         let clip = world.map(|point| camera.transform_point3(point));
         let size = Vec2::new(self.width as f32, self.height as f32);
@@ -319,7 +374,12 @@ impl GBuffer {
         // own UVs. `None` off the atlas — and on a UV-degenerate triangle,
         // where the honest answer is the smooth normal rather than a frame
         // divided by nothing.
+        //
+        // And none under `--pass wire` (#308): a fabric's weave and the skin's
+        // pores shade as a stipple at the scale of the finest cells, which is
+        // exactly the scale the wire is there to be read at.
         let relief = match &item.paint {
+            _ if self.wire.is_some() => None,
             Paint::Atlas {
                 uvs,
                 normals: Some(map),
@@ -411,6 +471,10 @@ impl GBuffer {
                     }
                     None => albedo,
                 };
+                let albedo = match (&self.wire, item.wire) {
+                    (Some(_), Some(clay)) => clay,
+                    _ => albedo,
+                };
 
                 self.depth[pixel] = depth;
                 // A per-texel finish overrides only the channel the atlas
@@ -438,6 +502,13 @@ impl GBuffer {
                 };
                 self.world[pixel] = point;
                 self.covered[pixel] = true;
+                if let Some(wire) = &mut self.wire {
+                    wire[pixel] = if item.wire.is_some() {
+                        ink(screen, raw, outline)
+                    } else {
+                        0.0
+                    };
+                }
             }
         }
     }
@@ -712,6 +783,31 @@ fn channel_to_linear(value: f32) -> f32 {
     } else {
         ((value + 0.055) / 1.055).powf(2.4)
     }
+}
+
+/// How much of a pixel a triangle's edges cover, for [`GBuffer::wire`].
+///
+/// `raw` is the pixel centre's three edge functions, each twice the area it
+/// spans with one edge, so dividing by that edge's length is the distance to
+/// it in pixels: no second pass over the mesh and no line rasteriser, only the
+/// numbers the fill already had.
+fn ink(screen: [Vec2; 3], raw: Vec3, outline: [bool; 3]) -> f32 {
+    let lengths = [
+        screen[1].distance(screen[2]),
+        screen[2].distance(screen[0]),
+        screen[0].distance(screen[1]),
+    ];
+    (0..3)
+        .map(|opposite| {
+            let distance = raw[opposite].abs() / lengths[opposite].max(1e-6);
+            let cover = (WIRE_HALF + 0.5 - distance).clamp(0.0, 1.0);
+            if outline[opposite] {
+                cover
+            } else {
+                cover * DIAGONAL
+            }
+        })
+        .fold(0.0, f32::max)
 }
 
 /// Twice the signed area of a triangle.

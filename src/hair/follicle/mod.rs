@@ -20,8 +20,9 @@
 //! subdivision pulls a head well inside its node radius, and anything placed
 //! against the nominal one floats.
 //!
-//! It is also why nothing here re-measures. [`Skull::measure`] is 61% of a
-//! geometry build, so this takes the one the pipeline already has.
+//! It is also why nothing here re-measures. [`Skull::measure`] is not free -
+//! about 4.5 ms a call, measured for #89 - so this takes the one the pipeline
+//! already has.
 //!
 //! # A point is asked about in the head's own proportions
 //!
@@ -285,8 +286,8 @@ impl Follicles {
     /// root and hangs in the air — which is most of why a hundred and fifty of
     /// them read as strings over a bare scalp rather than as hair.
     ///
-    /// The one the pipeline already measured, never a second: `Skull::measure` is
-    /// 61% of a geometry build.
+    /// The one the pipeline already measured, never a second: `Skull::measure`
+    /// costs about 4.5 ms a call (#89).
     #[must_use]
     pub fn skull(&self) -> &Skull {
         &self.skull

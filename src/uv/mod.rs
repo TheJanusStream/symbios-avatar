@@ -891,6 +891,13 @@ const JAW_EASE: f32 = 0.4;
 /// under a nudge, every region of the 43 rolls within a twentieth of 0.24.5's
 /// at the median and the face 0.85 of it. At 1.0, 545 tiles and 560 under a
 /// nudge; at 1.05, 555 and 576.
+///
+/// **Since #477 the ceiling is held in bytes**, the 3.56 MB those 576 tiles
+/// weighed (`texture::bake::CEILING`): a tile keeps 4 KB since then, and the
+/// default head here 516 of them, 2.2 MB. And it is read on real builds, where
+/// the head is a larger share of the atlas than on the bare default skeleton:
+/// the dearest person measured, at the budget sweep's lean, thin and tall
+/// corner with its head long and broad, keeps 3.26 MB.
 /// Provenance: **measured** (#473, its fixer and its second).
 const PERSON_HEAD_SHARE: f32 = 0.97;
 

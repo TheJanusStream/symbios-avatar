@@ -78,6 +78,36 @@ pub(crate) fn recessed(at: Vec3, centre: Vec3, radius: f32) -> Vec3 {
     at + inward * (0.005 * radius) - Vec3::Y * (0.002 * radius)
 }
 
+/// Where along the slit the lower lip's edge starts to let go of the jaw, as
+/// a share of the way from the midline to the weld on its side. See
+/// [`parting`].
+///
+/// Provenance: **chosen by render** (#498), the lower edge read as one curve
+/// from weld to weld at 12, 14 and 20 degrees on the default, seeds 6 and
+/// 29 and both mouth-width ends.
+const PARTING_FROM: f32 = 0.55;
+
+/// How much of the jaw's motion the lower lip's edge takes at `along` of the
+/// way from the midline to the weld on its side, `0..1`: all of it across
+/// the middle, none at the weld, eased between (#498).
+///
+/// The share the corner field leaves the jaw is a smooth bowl, but it does
+/// not reach zero at the weld - the corner is capped at 0.72 - while the
+/// weld, astride the seam, keeps the field's blend and with it no jaw at
+/// all. From #154 until #498 the lower lip was the jaw's outright up to the
+/// weld's neighbour, so the opening's edge stood 5 mm open there at 14
+/// degrees and shut in the one 1.3 mm cell to the weld: the sharp turn at
+/// each end of the trapezoid. Eased to nothing with zero slope, the two
+/// edges meet at the commissure as a lens's tips do.
+///
+/// Read off the vertex's own distance across, so the skin under the seam at
+/// the same distance takes the same share - no shear between the edge and
+/// the skin a millimetre below it (#154).
+#[must_use]
+pub(crate) fn parting(along: f32) -> f32 {
+    1.0 - super::smooth((along - PARTING_FROM) / (1.0 - PARTING_FROM))
+}
+
 /// The vertices the surgery made, by what should hold them.
 ///
 /// The seam chains run left to right and index `positions` of the mesh they
@@ -132,6 +162,35 @@ pub struct Mouth {
     pub welds: [u32; 2],
 }
 
+impl Mouth {
+    /// The azimuth sine the welds stand at off `centre`, the head joint,
+    /// averaged over the two sides: where this slit ends, in the unit
+    /// `face::skull::corner_hold` reads (#498).
+    #[must_use]
+    pub(crate) fn weld_side(&self, positions: &[Vec3], centre: Vec3) -> f32 {
+        let side = |weld: u32| {
+            let local = positions[weld as usize] - centre;
+            let across = Vec3::new(local.x, 0.0, local.z);
+            local.x.abs() / across.length().max(f32::EPSILON)
+        };
+        0.5 * (side(self.welds[0]) + side(self.welds[1]))
+    }
+
+    /// How far across the slit `at` lies: its distance off `centre`, the
+    /// head joint, as a share of the weld's on its own side - zero on the
+    /// midline, one at either weld, past one beyond it (#498).
+    #[must_use]
+    pub(crate) fn along(&self, positions: &[Vec3], centre: Vec3, at: Vec3) -> f32 {
+        let weld = if at.x < centre.x {
+            self.welds[0]
+        } else {
+            self.welds[1]
+        };
+        let reach = (positions[weld as usize].x - centre.x).abs();
+        (at.x - centre.x).abs() / reach.max(f32::EPSILON)
+    }
+}
+
 /// Cuts the parting into `body` and sews the pocket behind it.
 ///
 /// Returns `None` — leaving the body exactly as it was — when the rig carries
@@ -167,6 +226,21 @@ pub fn open(body: &mut PolyMesh, rig: &Rig, canon: &Canon, params: &FaceParams) 
         let p = body.positions[v as usize];
         (p.x - centre.x).abs() <= reach && p.z > centre.z && (p.y - mouth_y).abs() < radius * 0.35
     };
+    // **The share is measured from the KEY's first endpoint**, because that is
+    // the end `position_of` interpolates from (#494). From #154 until #494 it
+    // was measured from the first corner of whichever face met the edge first,
+    // which is the key's second whenever that face walks the edge from the
+    // higher index to the lower, and every such crossing was placed at
+    // `1 - t`: mirrored about the middle of its edge. On the default head 29
+    // of the 63 crossings stood off the curve, by up to 1.19 mm, a whole cell
+    // (1.13 mm down) wherever two neighbours disagreed, and the parting
+    // rendered as a saw of teeth, open and shut - the pocket's sections are
+    // stood on the seam, so its teeth ridge sawed with it. Which crossings
+    // flipped follows the vertex numbering, not the shape, so every
+    // refinement of the lip band (#189) dealt the teeth out again rather than
+    // removing them. Now the seam lies on the curve to within 0.004 mm on
+    // every roll and slider corner measured, and nothing else about the cut -
+    // which edges, the chain, the faces - changes.
     let mut crossings: HashMap<(u32, u32), f32> = HashMap::new();
     for face in &body.faces {
         for at in 0..face.len() {
@@ -176,8 +250,8 @@ pub fn open(body: &mut PolyMesh, rig: &Rig, canon: &Canon, params: &FaceParams) 
                 continue;
             }
             let (sa, sb) = (
-                above(body.positions[a as usize]),
-                above(body.positions[b as usize]),
+                above(body.positions[key.0 as usize]),
+                above(body.positions[key.1 as usize]),
             );
             if sa * sb < 0.0 {
                 crossings.insert(key, sa / (sa - sb));
@@ -411,9 +485,14 @@ pub fn open(body: &mut PolyMesh, rig: &Rig, canon: &Canon, params: &FaceParams) 
     // on seed 1 the two disagree by six millimetres, and the skin between
     // them hung half-held across a wide-open mouth as a stretched sheet
     // (#157). Where the field already answers 1.0 the override is a no-op,
-    // so depth costs nothing; the cut line is the one authority. The upper
-    // side is the same mismatch mirrored: skin above the cut is the skull's
-    // by definition, whatever the field says.
+    // so depth costs nothing; the cut line is the one authority. **0.10 to
+    // 0.14 of a radius** (#498): on seed 29's full lips the row 9.2 mm under
+    // the parting, 0.107 of its radius, fell just outside the band, still in
+    // the field's top blend and held 0.67 by the jaw on the midline, so the
+    // lip above it dropped whole and it stayed: the dark notch in the chin
+    // under an open mouth. No other body probed has field-held skin below
+    // 0.10. The upper side is the same mismatch mirrored: skin above the cut
+    // is the skull's by definition, whatever the field says.
     let above_seam: Vec<u32> = upper.iter().chain(&welds).copied().collect();
     let below_seam: Vec<u32> = lower.iter().chain(&welds).copied().collect();
     let lip = flood(&lower, &above_seam, &|vertex: u32| {
@@ -422,7 +501,7 @@ pub fn open(body: &mut PolyMesh, rig: &Rig, canon: &Canon, params: &FaceParams) 
         (p.x - centre.x).abs() <= reach + 0.02 * radius
             && p.z > centre.z
             && under > -0.002 * radius
-            && under < 0.10 * radius
+            && under < 0.14 * radius
     });
     let overlip = flood(&above_seam, &below_seam, &|vertex: u32| {
         let p = body.positions[vertex as usize];

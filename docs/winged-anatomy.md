@@ -1128,7 +1128,8 @@ few dozen cards. Built untiered, the dearest of the same 181 bodies is
 27,158 (seed 2, a bat-glider cross), and 49 of them pass 26,000 - 47
 bat-led, and two bird-glider crosses at appeal 1.5 at 26,285; **a ceiling of
 27,158 lets every one of them wear its cards whole**, still well under the
-engine's 33,500 target for a person (docs/budget.md). W5 (#424) thins the
+engine's 33,500 target for a person at the time (docs/budget.md; 25,000 since
+milestone #16, which a winged body is not judged by). W5 (#424) thins the
 contour cards under a folded wing rather than clearing them, so a spread
 wing shows no bare skin; the dearest is then 27,164, the same seed 2. The other levers are the membrane's grid (a pair of
 plagiopatagia alone is 2,576), which W2 tuned for a continuous extension,

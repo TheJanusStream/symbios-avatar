@@ -48,7 +48,11 @@ use super::features::FaceParams;
 /// measured 0.99, 1.29, 1.67 and 1.75 cells; the mouth band is refined a fourth
 /// time so they are 2.0 to 3.5. `the_mouth_is_wider_than_the_mesh_under_it`
 /// holds that, as a ratio rather than a millimetre figure, because the cell size
-/// moves with the refinement level and with the size of the head.
+/// moves with the refinement level and with the size of the head - read since
+/// #494 as each term's width over the rows of vertices DOWN under it, 2.05
+/// rows at the tightest it asserts. The upper border is the exception and is
+/// read, not held: seated above the lip band, it stands on 2.2 mm rows and is
+/// under one row tall on every head the guard reads.
 /// **The fourth number is how each lobe ends at the corner of the mouth, and
 /// giving them all the same one is what draws bars.** Multiplied by a single
 /// `corner` factor that is 1.0 out to 0.90 of the mouth's half-width and only
@@ -212,10 +216,23 @@ enum Across {
     /// Holds its depth almost to the corner, then ends without a cusp.
     ///
     /// Reaches past the vermilion on purpose: the lobes are gone by `1.0` and
-    /// this is still going at `1.05`, which is what makes a corner read as two
-    /// lips meeting rather than as the end of a slab.
+    /// this is still going at [`GROOVE_END`], which is what makes a corner read
+    /// as two lips meeting rather than as the end of a slab.
     Groove,
 }
+
+/// Where an [`Across::Groove`] lobe reaches nothing, in mouth half-widths.
+const GROOVE_END: f32 = 1.05;
+
+/// How far in from [`GROOVE_END`] an [`Across::Groove`] lobe begins to thin, in
+/// mouth half-widths.
+///
+/// **The narrowest feature ACROSS a face**: 4.4 mm on the default mouth (3.3
+/// to 5.4 over the heads `the_mouth_is_wider_than_the_mesh_under_it` reads),
+/// where every lip term is narrow DOWN. That test reads the mesh's columns
+/// against it since the lip band halves down (#189), which leaves the lips'
+/// cells 1.42 mm across.
+const GROOVE_FALL: f32 = 0.20;
 
 impl Across {
     /// How much of a lobe survives, `across` being distance from the midline in
@@ -223,7 +240,7 @@ impl Across {
     fn taper(self, across: f32) -> f32 {
         match self {
             Self::Lens => (1.0 - across * across).max(0.0),
-            Self::Groove => smooth(((1.05 - across) / 0.20).min(1.0)),
+            Self::Groove => smooth(((GROOVE_END - across) / GROOVE_FALL).min(1.0)),
         }
     }
 }
@@ -422,22 +439,49 @@ impl Face {
         }
     }
 
-    /// The narrowest Gaussian any of this face's fields uses, in metres.
+    /// The mouth's half-width in metres, which [`Self::mouth`] measures
+    /// `across` in: 0.6829 to 0.8017 of an eye-width by the `mouth_width` axis.
     ///
-    /// The number that decides whether a mouth can render at all: a term
-    /// narrower than the mesh cell under it becomes one displaced row of
-    /// vertices, which is a bar rather than a lip. See [`LIPS`].
+    /// One method for the carve and for the test that reads the mesh under it
+    /// (`the_mouth_is_wider_than_the_mesh_under_it`), so the two cannot drift.
+    fn mouth_half(&self) -> f32 {
+        self.unit * (0.6829 + 0.2376 * self.params.mouth_width)
+    }
+
+    /// The mouth line's height, head-local, `across` half-widths out from the
+    /// midline.
+    ///
+    /// Not level: the corners sit lower than the middle, and a mouth drawn
+    /// straight across reads as a slot. Shared with that test for
+    /// [`Self::mouth_half`]'s reason.
+    fn mouth_line_at(&self, across: f32) -> f32 {
+        self.mouth - self.frame * 0.0292 * across * across
+    }
+
+    /// Where each of [`LIPS`]' terms sits and how wide it is, both in plumps
+    /// off the mouth line, with the upper border seated as [`Self::mouth`]
+    /// seats it: the windows `the_mouth_is_wider_than_the_mesh_under_it`
+    /// reads the mesh's rows in.
+    ///
+    /// The numbers that decide whether a mouth can render at all: a term
+    /// narrower than the rows of vertices under it becomes one displaced row,
+    /// which is a bar rather than a lip.
     ///
     /// Test-only, and deliberately a method rather than arithmetic repeated in
     /// the test: a check that recomputes the widths from its own copy of the
     /// constants stops meaning anything the first time one of them moves.
     #[cfg(test)]
-    fn finest(&self) -> f32 {
-        self.plump
-            * LIPS
-                .iter()
-                .map(|&(_, _, width, _)| width)
-                .fold(f32::MAX, f32::min)
+    fn lip_windows(&self) -> [(f32, f32); LIPS.len()] {
+        let mut windows = [(0.0, 0.0); LIPS.len()];
+        for (term, &(_, centre, width, _)) in LIPS.iter().enumerate() {
+            let centre = if term == UPPER_BORDER {
+                self.border
+            } else {
+                centre
+            };
+            windows[term] = (centre, width);
+        }
+        windows
     }
 
     /// How far the surface stands out at a point, in metres.
@@ -620,8 +664,8 @@ impl Face {
         //
         // The span reaches 0.6829 to 0.8017 of an eye-width as a half, which is
         // a mouth 1.37 to 1.60 eye-widths across against the canon of fifths'
-        // one and a half.
-        let half = unit * (0.6829 + 0.2376 * self.params.mouth_width);
+        // one and a half: [`Self::mouth_half`].
+        let half = self.mouth_half();
         let plump = self.plump;
         // Lips stand about five millimetres off the face around them, and this
         // is that. It was nearly ten, and at ten the profile below has to swing
@@ -632,12 +676,10 @@ impl Face {
         let reach = unit * (0.1410 + 0.1113 * full);
 
         let across = local.x.abs() / half;
-        // The mouth line is not level: the corners sit lower than the middle,
-        // and a mouth drawn straight across reads as a slot.
-        let line = self.mouth - self.frame * 0.0292 * across * across;
+        let line = self.mouth_line_at(across);
         let up = (local.y - line) / plump;
 
-        let lips = if across > 1.05 || !(-2.40..=2.20).contains(&up) {
+        let lips = if across > GROOVE_END || !(-2.40..=2.20).contains(&up) {
             0.0
         } else {
             // Lower lip, upper lip, the line between them, and the crease under
@@ -922,11 +964,13 @@ fn ramp(curve: &[(f32, f32)], at: f32) -> f32 {
 /// own row of quads — a stack of horizontal bars. Re-authoring the knots cannot
 /// help; a Gaussian has no knots to alias.
 ///
-/// **And the cell under the mouth is 0.82 mm**, measured as the median edge
-/// length over the faces whose centroids sit within a lip's span of the mouth
-/// line, against 1.62 at the nose base. A Gaussian is still the right shape for
-/// a lip — but nothing in this file may argue that a millimetre is too small to
-/// show. It is four cells wide.
+/// **And the rows under the lips are 1.1 mm apart** on the default head, read
+/// as the median down step of the edges in the mouth's columns under each
+/// term (#494, `the_mouth_is_wider_than_the_mesh_under_it`): the lobes, the
+/// groove and the lower border stand on the lip band's rows, the crease and
+/// the upper border on the nose-base band's 2.2 mm. A Gaussian is still the
+/// right shape for a lip — but nothing in this file may argue that a
+/// millimetre is too small to show. The groove is three rows tall.
 fn bump(at: f32, centre: f32, width: f32) -> f32 {
     let along = (at - centre) / width.max(f32::EPSILON);
     (-along * along).exp()
@@ -1209,7 +1253,56 @@ mod tests {
         // cells and the mouth rendered as a stack of horizontal bars. The
         // fourth pass covers the mouth band alone and takes it to about 2.0
         // (#85). Below about 1.5 a Gaussian cannot survive being sampled.
-        let mut worst: Vec<(Option<i64>, f32, f32, f32)> = Vec::new();
+        //
+        // **Down the mouth's columns, term by term** (#494). Every lip term is
+        // a bump in `up` alone - the lobes run the mouth's width and taper only
+        // at its corners - so what decides whether one survives being sampled
+        // is how far apart the vertex ROWS are where it sits, not how big the
+        // cells are. This read the median of every edge round the mouth, which
+        // stood for that while every pass quartered its cells and kept their
+        // aspect. #189 halves the nose-base pair's second pass DOWN only, so
+        // round the lips the cells are 1.42 mm across and 2.25 down, and with
+        // the lip band still quartered (0.70 by 1.13 on the lips) the old
+        // median, across edges and coarse rows together, read 1.37 on seed 99
+        // while the rows under the lips were where they had always been. So
+        // each term is read against the median DOWN step of the edges under
+        // its own window: in the mouth's columns, within one width of its
+        // centre in `up`, where [`Face::mouth`] reads `up`.
+        //
+        // Measured with the lip band quartered, and the same to the hundredth
+        // on 0.24.7's mesh and with the lip band halved DOWN as well (#189's
+        // variant A, the one taken, which keeps the down step): the narrowest
+        // asserted term, the lower vermilion border, is 2.05 to 2.55 rows tall
+        // over the five heads, the groove between the lips 2.96 to 3.67. With
+        // the lip band's pass taken out the lips stand on the nose-base band's
+        // 2.25 mm rows and the lower border falls to 1.10 and the groove to
+        // 1.58: red.
+        //
+        // **The upper border is read and not asserted, and it is under a row**
+        // on every head here: 0.85 to 1.06. It is seated by [`Face::border`]
+        // a plump above the line, above the lip band's ceiling, on the
+        // nose-base band's 2.2 mm rows - in 0.24.7 as much as now; the median
+        // this test used to take could not see it. Refining it is a question
+        // of budget for the owner, not one a guard can answer by going red on
+        // every build.
+        //
+        // **And across, where a lobe is narrow across: the groove's corner**
+        // (#189's critic). A [`Across::Groove`] lobe thins over the last
+        // [`GROOVE_FALL`] of the mouth's half-width, 4.4 mm on the default
+        // mouth, and that taper is a feature narrow ACROSS, which the rows
+        // down cannot see. Since the lip band halves down too, the lips'
+        // cells are 1.42 mm across where they were 0.70, so the taper is read
+        // against the median ACROSS step of the edges in its own columns,
+        // within the groove's window in `up`, by the same 1.5.
+        //
+        // Measured on the five heads below: 3.23 to 4.31 columns. It has
+        // room, and it is a floor, not a fit: halving the nose-base pair's
+        // first pass down as well doubles the step (2.08 to 2.71 mm) and
+        // still reads 1.58 to 2.15, a coarse ramp rather than a step, while
+        // a taper authored at 0.08 of a half-width instead of 0.20 reads 1.34
+        // to 1.74: red.
+        let mut worst: Vec<(Option<i64>, usize, f32, f32, usize)> = Vec::new();
+        let mut corners: Vec<(Option<i64>, f32, f32, usize)> = Vec::new();
         // Seed 42 is the crate's dearest head and its smallest — `tests/budget`
         // finds its corner at every sweep — so it is the one whose cells are
         // most likely to be under a term rather than over it.
@@ -1221,52 +1314,123 @@ mod tests {
             let (mesh, rig, canon) = measured(&record);
             let face = Face::new(&canon, &record.face);
             let centre = rig.joints[canon.head].position;
+            let half = face.mouth_half();
 
-            // The median edge of the faces the mouth actually sits on.
-            let mut edges: Vec<f32> = Vec::new();
-            for index in 0..mesh.face_count() {
-                let at = mesh.face_centroid(index) - centre;
-                if at.z <= 0.0 || (at.y - face.mouth).abs() > face.plump * 1.4 {
-                    continue;
-                }
-                let ring = &mesh.faces[index];
+            // Every DOWN edge in the mouth's columns: an edge that steps
+            // further down the head than across it, both ends in front of the
+            // joint and its middle inside the mouth's own half-width, with
+            // where it sits read in plumps off the dipping mouth line. And
+            // every ACROSS edge in the groove's corner columns, read the same
+            // way.
+            let mut down: Vec<(f32, f32)> = Vec::new();
+            let mut sideways: Vec<(f32, f32)> = Vec::new();
+            for ring in &mesh.faces {
                 for corner in 0..ring.len() {
-                    let next = (corner + 1) % ring.len();
-                    edges.push(
-                        mesh.positions[ring[corner] as usize]
-                            .distance(mesh.positions[ring[next] as usize]),
-                    );
+                    let a = mesh.positions[ring[corner] as usize] - centre;
+                    let b = mesh.positions[ring[(corner + 1) % ring.len()] as usize] - centre;
+                    let step = b - a;
+                    if a.z <= 0.0 || b.z <= 0.0 {
+                        continue;
+                    }
+                    let middle = 0.5 * (a + b);
+                    let across = middle.x.abs() / half;
+                    let up = (middle.y - face.mouth_line_at(across)) / face.plump;
+                    if step.y.abs() > step.x.abs() {
+                        if across <= 1.0 {
+                            down.push((up, step.y.abs()));
+                        }
+                    } else if (GROOVE_END - GROOVE_FALL..=GROOVE_END).contains(&across) {
+                        sideways.push((up, step.x.abs()));
+                    }
                 }
             }
-            assert!(!edges.is_empty(), "seed {seed:?}: no faces under the mouth");
-            edges.sort_by(f32::total_cmp);
-            let cell = edges[edges.len() / 2];
-            worst.push((seed, face.finest(), cell, face.finest() / cell));
+            let windows = face.lip_windows();
+            for (term, (centre, width)) in windows.into_iter().enumerate() {
+                let mut steps: Vec<f32> = down
+                    .iter()
+                    .filter(|(up, _)| (up - centre).abs() <= width)
+                    .map(|&(_, step)| step)
+                    .collect();
+                assert!(
+                    !steps.is_empty(),
+                    "seed {seed:?}: no down edge under lip term {term}"
+                );
+                steps.sort_by(f32::total_cmp);
+                let row = steps[steps.len() / 2];
+                worst.push((seed, term, width * face.plump, row, steps.len()));
+            }
+            for (term, &(.., ending)) in LIPS.iter().enumerate() {
+                if ending != Across::Groove {
+                    continue;
+                }
+                let (centre, width) = windows[term];
+                let mut steps: Vec<f32> = sideways
+                    .iter()
+                    .filter(|(up, _)| (up - centre).abs() <= width)
+                    .map(|&(_, step)| step)
+                    .collect();
+                assert!(
+                    !steps.is_empty(),
+                    "seed {seed:?}: no across edge under lip term {term}'s corner"
+                );
+                steps.sort_by(f32::total_cmp);
+                let column = steps[steps.len() / 2];
+                corners.push((seed, GROOVE_FALL * half, column, steps.len()));
+            }
         }
 
-        // Every seed reported, not the first to fail. The ratio moves with the
-        // head's size, the mouth axis and the refinement band all at once, so
-        // one seed's number says almost nothing about where the margin is.
+        // Every seed and term reported, not the first to fail. The ratio moves
+        // with the head's size, the mouth axis and the refinement bands all at
+        // once, so one seed's number says almost nothing about where the
+        // margin is.
         let table: Vec<String> = worst
             .iter()
-            .map(|(seed, finest, cell, ratio)| {
+            .map(|(seed, term, width, row, count)| {
                 format!(
-                    "{seed:?}: {:.2} mm term / {:.2} mm cell = {ratio:.2}",
-                    finest * 1000.0,
-                    cell * 1000.0
+                    "{seed:?} term {term}: {:.2} mm over {:.2} mm rows = {:.2} ({count} edges)",
+                    width * 1000.0,
+                    row * 1000.0,
+                    width / row
                 )
             })
             .collect();
-        let tightest = worst.iter().fold(f32::MAX, |low, entry| low.min(entry.3));
+        let tightest = worst
+            .iter()
+            .filter(|entry| entry.1 != UPPER_BORDER)
+            .fold(f32::MAX, |low, entry| low.min(entry.2 / entry.3));
         // Printed rather than computed and thrown away: the margin here is what
         // decides whether a new lobe can be authored at all, and reading it
         // should not require breaking the build (`docs/instruments.md` rule 9).
-        println!("the mouth's narrowest term, per seed: {}", table.join("; "));
+        println!("the mouth's lip terms, in rows down: {}", table.join("; "));
+        let across: Vec<String> = corners
+            .iter()
+            .map(|(seed, taper, column, count)| {
+                format!(
+                    "{seed:?}: {:.2} mm over {:.2} mm columns = {:.2} ({count} edges)",
+                    taper * 1000.0,
+                    column * 1000.0,
+                    taper / column
+                )
+            })
+            .collect();
+        let narrowest = corners
+            .iter()
+            .fold(f32::MAX, |low, entry| low.min(entry.1 / entry.2));
+        println!(
+            "the groove's corner taper, in columns across: {}",
+            across.join("; ")
+        );
         assert!(
             tightest > 1.5,
-            "the narrowest term in the mouth is {tightest:.2} cells wide, and a Gaussian \
-             that narrow renders as one displaced row of vertices, which is a bar — {}",
+            "a lip term is {tightest:.2} rows of vertices tall where it sits, and a Gaussian \
+             that narrow renders as one displaced row, which is a bar — {}",
             table.join("; ")
+        );
+        assert!(
+            narrowest > 1.5,
+            "the groove's corner taper is {narrowest:.2} columns of vertices wide where it \
+             ends, and a taper that narrow ends the lips as a step - {}",
+            across.join("; ")
         );
     }
 

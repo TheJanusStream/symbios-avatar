@@ -992,6 +992,52 @@ impl HeadTraits {
     }
 }
 
+/// Which way a [`FACE_PASSES`] pass splits the faces it selects (#189).
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum Split {
+    /// Every face in four, one per corner: [`PolyMesh::refine_curved`]. Halves
+    /// a cell both ways and keeps its aspect.
+    Both,
+    /// Every quad in two, halving it DOWN the head and leaving it as wide as
+    /// it was: [`PolyMesh::refine_curved_along`] with the head's own up.
+    ///
+    /// **For a pass whose cells are already fine across.** A quad off the
+    /// head's tube is taller than it is wide, and a quartering keeps that
+    /// ratio whatever it refines. Measured on the default body before this
+    /// existed, the mouth band ran 1.43 mm across and 4.51 down after the
+    /// nose-base pair's first pass, 0.71 by 2.25 after its second and 0.35 by
+    /// 1.13 after the lip band - 3:1 and worse at every step - and the second
+    /// of the pair cost 5,042 triangles (5,788 at the dearest sweep corner),
+    /// the dearest pass in the table, for an across cell the band did not
+    /// need. Halved down instead it costs 1,778 (1,976) and leaves the mouth
+    /// band 1.42 by 2.25, a cell squarer than it found.
+    ///
+    /// **The lip band halves down too** (#189, the owner's pick by render on
+    /// 2026-11-22). Quartered after the pair it cost 1,574 and left the lips
+    /// 0.70 mm across by 1.13 down; halved, it saves about 1,050 more on the
+    /// default body and leaves them 1.42 by 1.13 - the same DOWN cell, which
+    /// is the one every lip term is narrow in. It was first measured tripping
+    /// two guards, and both readings were taken on a sawn parting: until #494
+    /// the mouth's cut placed half its crossings mirrored across their cells
+    /// (`face::mouth::open`). A moustache card at the mouth's corner read 1.56
+    /// times its skin with the jaw open, against its guard's 1.25, and reads
+    /// 1.16 with the seam on its curve. And the mouth guard counted cells
+    /// ACROSS the lips, where `the_mouth_is_wider_than_the_mesh_under_it` now
+    /// counts the rows DOWN under each lip term, which halving down leaves
+    /// where they were: 2.05 rows at the tightest, quartered or halved.
+    /// Renders: `exports/milestone16/round-b/alt494-variantA-with-fix-*`.
+    ///
+    /// **Not for the jaw flank**, whose cells are about 1.3:1 and would come out
+    /// wider than tall; nor for a pass whose band holds a feature narrow
+    /// ACROSS - the dorsum is a ridge, and the cell across it is what holds one.
+    ///
+    /// "Down" is the world's up at rest, which is the axis [`refine_face`]
+    /// already measures its band heights along: the tube is swept up the head
+    /// bone and the head stands on its neck, so each quad's pair of edges
+    /// nearest to it is the pair running down the face.
+    Down,
+}
+
 /// The region each refinement pass covers: how far round the head it reaches as
 /// a cosine of the angle from dead ahead, then its lowest and highest point.
 ///
@@ -1157,7 +1203,13 @@ impl HeadTraits {
 /// body alone. At 0.97 it is **382 on the default and 548 at the dearest**.
 /// A band's cost lives in its azimuth, which is why the two ends here are
 /// measured rather than guessed at.
-const FACE_PASSES: [(f32, f32, f32, f32); 10] = [
+///
+/// **The fifth field is which way a pass splits, and two passes split DOWN
+/// only** (#189): the second of the nose-base pair and the lip band. See
+/// [`Split`]: the head's cells are 2:1 to 3.5:1 tall, a quartering keeps that,
+/// and the pair's second pass paid most of its 5,042 triangles for an across
+/// cell the band did not need.
+const FACE_PASSES: [(f32, f32, f32, f32, Split); 10] = [
     // **The broadest pass, and it is here because the body's subdivision level
     // halved** (#107). Eight-point cage rings buy the body a smooth surface at
     // one Catmull-Clark pass instead of two, which is where the triangle budget
@@ -1188,24 +1240,28 @@ const FACE_PASSES: [(f32, f32, f32, f32); 10] = [
     // the price of the ceiling meaning what the sentence above says it means.
     // The other two ceilings, 0.60 and 0.50, are NOT margin and did not move:
     // they are feature bands, and `BROW` runs out at 0.58.
-    (-0.30, 1.0, -0.80, 1.10),
-    (0.25, 1.0, -0.80, 0.60),
-    (0.55, 1.0, -0.714, 0.50),
+    (-0.30, 1.0, -0.80, 1.10, Split::Both),
+    (0.25, 1.0, -0.80, 0.60, Split::Both),
+    (0.55, 1.0, -0.714, 0.50, Split::Both),
     // The flank of the jaw, from where the mouth's passes give up round to
     // just behind the ear. Listed twice for the same reason the mouth's band
     // is, and it is the only region here that both of its bounds are real.
-    (-0.15, 0.55, -0.571, -0.200),
-    (-0.15, 0.55, -0.571, -0.200),
+    (-0.15, 0.55, -0.571, -0.200, Split::Both),
+    (-0.15, 0.55, -0.571, -0.200, Split::Both),
     // Nose base to below the chin: the only band where the features are
     // smaller than the surface carrying them. Listed twice because a region is
-    // refined once per pass that names it, and this one wants two.
-    (0.55, 1.0, -0.443, -0.171),
-    (0.55, 1.0, -0.443, -0.171),
+    // refined once per pass that names it, and this one wants two - the
+    // second DOWN only (#189), since after the first the band is already
+    // 1.4 mm across and 4.5 down. See [`Split::Down`].
+    (0.55, 1.0, -0.443, -0.171, Split::Both),
+    (0.55, 1.0, -0.443, -0.171, Split::Down),
     // The dorsum of the nose, from the nose base pair's own ceiling up to the
     // root. Narrow, because a bridge is: see the note above for what the
     // azimuth costs.
-    (0.97, 1.0, -0.171, 0.20),
-    (0.92, 1.0, -0.360, -0.255),
+    (0.97, 1.0, -0.171, 0.20, Split::Both),
+    // The lips, halved DOWN only (#189): every lip term is narrow in height,
+    // and the band arrives here 1.42 mm across. See [`Split::Down`].
+    (0.92, 1.0, -0.360, -0.255, Split::Down),
     // The FRONT of the mandible's border (#196). The cosine border (#195)
     // runs from −0.495 at 33° to −0.43 at 57°, which is BELOW the nose-base
     // pair's floor and INSIDE the jaw annulus's near cosine — a strip no band
@@ -1216,7 +1272,7 @@ const FACE_PASSES: [(f32, f32, f32, f32); 10] = [
     // dearest sweep corner, and `tests/budget.rs`'s ceilings were re-based to
     // carry it — the sheets beat the arithmetic, which is #193's standing
     // order for this band.
-    (0.55, 0.92, -0.575, -0.415),
+    (0.55, 0.92, -0.575, -0.415, Split::Both),
 ];
 
 /// The `FACE_PASSES` band edge that selects a given height on the built face.
@@ -1314,10 +1370,14 @@ pub fn refine_face(mesh: &PolyMesh, rig: &Rig, levels: usize) -> PolyMesh {
 
     let mut refined = mesh.clone();
     for pass in 0..levels {
-        // Passes past the last named one repeat the tightest region rather than
+        // Passes past the last named one repeat the LAST entry rather than
         // widening again, so asking for more resolution never spends it on a
-        // forehead.
-        let (near, far, low, high) = FACE_PASSES[pass.min(FACE_PASSES.len() - 1)];
+        // forehead. Since #196 that entry is the front of the mandible's
+        // border, not the mouth's tightest band, so an extra pass buys the
+        // jaw's border and not the lips; the crate asks for exactly the passes
+        // named (`FACE_REFINEMENT`), and `examples/refinecost`'s last row is
+        // what one more would cost.
+        let (near, far, low, high, split) = FACE_PASSES[pass.min(FACE_PASSES.len() - 1)];
         // Below the joint a band edge is a profile height, so it is stretched
         // onto this head's own lower face; above it, a skull radius, unchanged.
         // See [`FACE_PASSES`] and [`reshape_to`], whose remap this is.
@@ -1352,7 +1412,10 @@ pub fn refine_face(mesh: &PolyMesh, rig: &Rig, levels: usize) -> PolyMesh {
                 span > f32::EPSILON && across.z / span > near && across.z / span <= far
             })
             .collect();
-        refined = refined.refine_curved(&selected);
+        refined = match split {
+            Split::Both => refined.refine_curved(&selected),
+            Split::Down => refined.refine_curved_along(&selected, Vec3::Y),
+        };
     }
     refined
 }
@@ -1942,6 +2005,18 @@ pub(crate) fn brow_hold(rise: f32, facing: f32, side: f32) -> f32 {
     risen * fade * ahead * mine
 }
 
+/// Where the default body's slit ends, as the azimuth sine [`corner_hold`]
+/// reads (`side`): the welds of `face::mouth::open` measure 0.224 on it.
+///
+/// [`corner_hold`]'s lateral bands are authored on the default body, and a
+/// body whose slit ends elsewhere reads them scaled by its own weld
+/// (#498): the mouth-width axis puts the welds anywhere from 0.12 to 0.37,
+/// and read in fixed units the narrowest mouth's corners were held 0.11 -
+/// its lower lip dropped nearly whole, a box with walls at the welds - and
+/// the widest's held 0.72 across the outer half of the slit.
+/// Provenance: **measured** (#498's probe, the default record).
+pub(crate) const CORNER_WELD: f32 = 0.224;
+
 /// How much of the skin at a point one MOUTH CORNER carries, `0..1`.
 ///
 /// The third face territory: a patch astride the commissure, one side
@@ -1957,14 +2032,36 @@ pub(crate) fn brow_hold(rise: f32, facing: f32, side: f32) -> f32 {
 ///   constant, because the slit's two edges are held by different bones
 ///   (head above, jaw below — the lower edge is wholly the jaw's) and
 ///   only a field that takes the SAME share from both sides moves the seam
-///   as one thing. Full within ±0.06 of the span, gone by ±0.10.
-/// * **Side**: the corner sits at 0.21 to 0.31 of the horizontal reach by
-///   the mouth-width axis; the field rises from 0.10, holds across that
-///   range, and dies by 0.48 — in from the cheek, out of the philtrum and
-///   the chin's midline.
+///   as one thing. Full within 0.06 of the span above, gone by 0.10;
+///   **below, full within 0.02 and gone by 0.12** (#498). The symmetry is
+///   owed AT the line, where both edges stand. Below it the share this
+///   field takes is the jaw's, and released over 0.04 the skin under each
+///   corner went from 0.28 jaw to all of it in 6.6 mm of height: opened 14
+///   degrees, 5.9 to 14.9 mm of drop across 3 mm, a crease curving down
+///   from each corner. Released over 0.10 the same stretch is spread over
+///   17 mm.
+/// * **Side**: the field rises from 0.02, is full by 0.21, just inside the
+///   default's weld, holds out past it, and dies by 0.48 - in from the
+///   cheek, out of the philtrum and the chin's midline. The rise and the
+///   line's dip belong to the slit, and read `side` times `scale`, the
+///   body's own slit against the default's, so they land on this mouth's
+///   commissure ([`CORNER_WELD`], #498); the fade belongs to the cheek and
+///   reads `side` as it is. Scaled too, the narrowest mouth's fade came in
+///   to 0.26, 12 mm past its weld, and opened as a lump on the cheek.
 /// * **Facing**: a frontal guard only; the mouth is nearly frontal (the
 ///   corner measures 0.95), so `side` is the coordinate that does the work
 ///   here, the opposite division of labour from the brow's.
+///
+/// **The rise spans the slit, not its last third** (#498). It rose from
+/// 0.10 to 0.18 from #216 until #498, about 8.7 to 15.6 mm off the midline
+/// on the default, a slit 18.7 mm in half-width. Below the line the share
+/// this field takes is the jaw's, so the lower lip's jaw share fell from 1.0
+/// to 0.28 across those 7 mm - at every depth the field's height band
+/// reaches, 0 to 16 mm under the parting. Opened 14 degrees the lower lip
+/// and the skin under it dropped 19 mm in the middle and 5 mm past that
+/// ramp: the opening was a trapezoid, with a cliff of 6.3 mm per mm running
+/// down from each end of its flat bottom. Spread over the whole slit, the
+/// share the corner takes is a smooth bowl and so is the drop.
 ///
 /// **Capped at 0.72 rather than reaching 1.0, and the cap is the jaw's.** A
 /// corner fully owned by its own joint is pinned when the mandible opens,
@@ -1973,11 +2070,16 @@ pub(crate) fn brow_hold(rise: f32, facing: f32, side: f32) -> f32 {
 /// the line, so an open carries the commissure part-way — the almond a real
 /// mouth opens into — while a smile still moves the corner at nearly
 /// three-quarters of the rigid arc.
-pub(crate) fn corner_hold(below: f32, facing: f32, side: f32) -> f32 {
-    let out = side.abs().min(0.31);
+pub(crate) fn corner_hold(below: f32, facing: f32, side: f32, scale: f32) -> f32 {
+    let out = (side * scale).abs().min(0.31);
     let line = 0.345 + 0.018 * (out / 0.26) * (out / 0.26);
-    let band = smooth((0.10 - (below - line).abs()) / 0.04);
-    let outward = smooth((side - 0.10) / 0.08);
+    let off = below - line;
+    let band = if off > 0.0 {
+        smooth((0.12 - off) / 0.10)
+    } else {
+        smooth((0.10 + off) / 0.04)
+    };
+    let outward = smooth((side * scale - 0.02) / 0.19);
     let inward = smooth((0.48 - side) / 0.12);
     let ahead = smooth((facing - 0.60) / 0.15);
     0.72 * band * outward * inward * ahead
@@ -1998,14 +2100,16 @@ pub(crate) fn corner_hold(below: f32, facing: f32, side: f32) -> f32 {
 ///
 /// - **Top**: rises below the mouth line — 0.39 of the span on the midline,
 ///   easing to the gonion's 0.35 at the side, so the lower lip is inside and
-///   the upper lip is out. The blend is 0.06 wide; the bind-time smoothing
-///   pass softens it further.
+///   the upper lip is out. The blend is 0.06 wide, 0.015 inside the slit
+///   (`scale` is the body's slit against the default's, as
+///   [`corner_hold`] reads it); the bind-time smoothing pass softens it
+///   further.
 /// - **Bottom**: fades to nothing at [`LARYNX`] over 0.10 of the span.
 /// - **Round**: dies behind the ear with the same curve [`jaw`]'s hollow uses,
 ///   so the region and the cosmetic border agree about where the face ends.
 ///   No release toward the gonion: the hinge sits at the ear, so skin near it
 ///   sweeps a small arc however fully it is held.
-pub(crate) fn mandible_hold(below: f32, facing: f32, side: f32) -> f32 {
+pub(crate) fn mandible_hold(below: f32, facing: f32, side: f32, scale: f32) -> f32 {
     let top = 0.39 - 0.04 * side.abs();
     // The top blend narrows where the mouth's slit is (#154): the parting is a
     // real seam there, its lower edge wholly the jaw's, and skin blending over
@@ -2013,7 +2117,18 @@ pub(crate) fn mandible_hold(below: f32, facing: f32, side: f32) -> f32 {
     // shear band across one mesh cell. Ahead of the mouth's corners — the
     // slit's own azimuth range — the blend tightens to 0.015; past them the
     // cheek keeps the soft edge, which is what a cheek wants.
-    let width = 0.06 - 0.045 * smooth((facing - 0.80) / 0.12);
+    //
+    // **"Ahead of the corners" is read off the slit itself** (#498): `side`
+    // times `scale`, the body's slit against the default's, narrow to 0.12
+    // (0.54 of the way to the weld, where the lower lip starts letting go of
+    // the jaw, `face::mouth::parting`) and soft again by 0.22, at the weld. Keyed to `facing` alone the narrow edge ran out to side 0.39, past
+    // every commissure, and the cheek beside each corner went from no jaw to
+    // its whole share in 2.5 mm under the line: on the widest mouth 2.0 to
+    // 8.7 mm of drop across 2.3 mm at 14 degrees, a crease running out from
+    // each corner. Inside the slit the lip band's own rule holds the skin,
+    // and the band reaches past this edge's full height.
+    let ahead = smooth((facing - 0.80) / 0.12) * smooth((0.22 - side.abs() * scale) / 0.10);
+    let width = 0.06 - 0.045 * ahead;
     let risen = smooth((below - top) / width);
     let fade = smooth((LARYNX - below) / 0.10);
     let round = smooth((facing + 0.30) / 0.30);
@@ -2179,7 +2294,7 @@ mod tests {
                     ("the mouth line", canon.mouth_line(), 8),
                     ("the chin", canon.chin(), 3),
                 ] {
-                    let (_, _, low, high) = FACE_PASSES[pass];
+                    let (_, _, low, high, _) = FACE_PASSES[pass];
                     let edge = at(height);
                     assert!(
                         edge >= low - SEAM && edge <= high + SEAM,
@@ -2858,6 +2973,114 @@ mod tests {
         }
     }
 
+    /// [`midline`] as it was asked before the column (#89): point by point,
+    /// each one through [`PolyMesh::contains`] over the whole mesh.
+    fn midline_by_contains(mesh: &PolyMesh, centre: Vec3, y: f32) -> Option<f32> {
+        let inside = |z: f32| mesh.contains(Vec3::new(centre.x, centre.y + y, centre.z + z));
+        if !inside(0.0) {
+            return None;
+        }
+        let (mut near, mut out) = (0.0f32, 0.30f32);
+        for _ in 0..24 {
+            let mid = 0.5 * (near + out);
+            if inside(mid) {
+                near = mid;
+            } else {
+                out = mid;
+            }
+        }
+        Some(near)
+    }
+
+    #[test]
+    fn the_midline_column_reads_what_contains_reads() {
+        // **To the bit, because a build's skull is only allowed to get cheaper
+        // here, never different** (#89). [`midline`] answers through a column
+        // that tests each face's slab and height once and its depth per point;
+        // [`PolyMesh::contains`] tests all three per point. They run the same
+        // functions, so they cannot disagree - and this is what notices the day
+        // somebody edits one test and not the other. Every height [`menton`]
+        // could read is read off both, from below the throat to well over the
+        // chin, on the two surfaces a build measures: the shaped head, and the
+        // head with its face carved and its mouth cut.
+        //
+        // The bodies are the default, a roll, the budget sweep's dear corner
+        // (seed 2, lean, thin and tall, the head long and broad), and a roll
+        // with its face axes at the explored ends, whose carve and cut reach
+        // furthest. The probe the column was proved with built 332 bodies
+        // through `Avatar::build_for_shape` - 48 rolls, the budget sweep's 224
+        // and 60 slider corners - and found all 664 skulls equal to the bit.
+        let lean = crate::plan::BODY_FAT_RANGE.0;
+        let tall = crate::plan::humanoid_height_range().1;
+        let mut bodies = vec![("default", AvatarRecord::new("Column", Archetype::default()))];
+        let mut rolled = AvatarRecord::new("Column", Archetype::default());
+        rolled.reroll(99);
+        bodies.push(("seed 99", rolled));
+        let mut dear = AvatarRecord::new("Column", Archetype::default());
+        dear.reroll(2);
+        dear.composites.femininity = 0.0;
+        dear.composites.mass = -2.0;
+        dear.composites.body_fat = lean;
+        if let Archetype::Humanoid(params) = &mut dear.archetype {
+            params.head_breadth = 1.0;
+            params.face_length = 1.0;
+            params.height = tall;
+        }
+        bodies.push(("seed 2 dear corner", dear));
+        let mut faced = AvatarRecord::new("Column", Archetype::default());
+        faced.reroll(7);
+        faced.face.nose = 2.0;
+        faced.face.nose_width = 2.0;
+        faced.face.mouth = 2.0;
+        faced.face.mouth_width = 2.0;
+        bodies.push(("seed 7 face axes at +2", faced));
+
+        for (label, mut record) in bodies {
+            record.sanitize();
+            let skeleton = record.skeleton();
+            let traits = HeadTraits::of(&record.composites);
+            let face = record.face.on(&traits);
+            let mut mesh = crate::build_body(
+                &skeleton,
+                &CageConfig::default(),
+                crate::BODY_SUBDIVISIONS,
+                &traits,
+            )
+            .expect("a body builds");
+            let rig = Rig::from_skeleton(&skeleton).expect("rigs");
+            let skull = Skull::measure(&mesh, &rig).expect("a skull");
+            let canon = Canon::measure(&rig, &skull, &record.eyes);
+            let shaped = mesh.clone();
+            crate::face::carve_face(&mut mesh, &rig, &canon, &face);
+            let cut = crate::face::mouth::open(&mut mesh, &rig, &canon, &face);
+            assert!(cut.is_some(), "{label}: the mouth was not cut");
+
+            let centre = rig.joints[skull.head].position;
+            let (throat, _) = skull.throat_and_crown();
+            for (surface, at) in [("shaped", &shaped), ("carved", &mesh)] {
+                let extents = at.face_extents();
+                let (mut y, mut read) = (throat - 0.003_7, 0usize);
+                while y < skull.chin() + 0.04 {
+                    let column = midline(at, &extents, centre, y);
+                    assert_eq!(
+                        column.map(f32::to_bits),
+                        midline_by_contains(at, centre, y).map(f32::to_bits),
+                        "{label}, {surface} head, {:+.3} mm: the column and `contains` \
+                         read the midline differently",
+                        y * 1000.0
+                    );
+                    read += usize::from(column.is_some());
+                    y += 0.000_7;
+                }
+                assert!(
+                    read > 40,
+                    "{label}, {surface} head: only {read} heights were on the midline, so \
+                     this compared next to nothing"
+                );
+            }
+        }
+    }
+
     #[test]
     fn a_head_with_no_chin_on_it_still_answers_inside_its_own_surface() {
         // [`shape`] bails on anything that walks on four legs, so a creature's
@@ -2972,11 +3195,12 @@ mod tests {
             crate::face::carve_face(&mut mesh, &rig, &canon, &Default::default());
 
             let centre = rig.joints[skull.head].position;
+            let extents = mesh.face_extents();
             let chin = skull.chin();
             let profile: Vec<(f32, f32)> = (0..)
                 .map(|step| chin + 0.001 * step as f32)
                 .take_while(|y| *y < canon.nose_base())
-                .filter_map(|y| midline(&mesh, centre, y).map(|reach| (y, reach)))
+                .filter_map(|y| midline(&mesh, &extents, centre, y).map(|reach| (y, reach)))
                 .collect();
 
             let mut turns: Vec<(f32, bool)> = Vec::new();
@@ -3000,7 +3224,8 @@ mod tests {
                     .find(|(_, up)| !*up)
                     .map(|(reach, _)| *reach)
             });
-            let at_chin = midline(&mesh, centre, chin).expect("the chin is on the midline");
+            let at_chin =
+                midline(&mesh, &extents, centre, chin).expect("the chin is on the midline");
             margins.push((seed, lip.map_or(f32::MAX, |lip| at_chin - lip)));
         }
 
@@ -3786,6 +4011,85 @@ mod tests {
                 fine / coarse
             );
         }
+    }
+
+    /// The steepest change of `field` per unit of `below` over `range`,
+    /// sampled every 0.0005 of the span.
+    fn steepest(field: impl Fn(f32) -> f32, range: (f32, f32)) -> f32 {
+        let step = 0.0005;
+        let mut worst = 0.0f32;
+        let mut at = range.0;
+        while at + step <= range.1 {
+            worst = worst.max((field(at + step) - field(at)).abs() / step);
+            at += step;
+        }
+        worst
+    }
+
+    #[test]
+    fn the_corner_lets_go_of_the_skin_under_the_line_gradually() {
+        // #498's crease under each corner. Below the mouth line the share the
+        // corner field takes is the jaw's, so how fast the field lets go with
+        // height is how fast the skin under the corner goes from corner-held
+        // to dropping with the chin. Released over 0.04 of the span, as above
+        // the line, the field fell at up to 27 per span (0.72 x 1.5 / 0.04)
+        // and opened a crease curving down from each corner; over 0.10 it
+        // falls at 10.8. Read at the default's commissure, side 0.224, facing
+        // 0.97, from the line down to where the field has gone.
+        let side = CORNER_WELD;
+        let facing = (1.0 - side * side).sqrt();
+        let line = 0.345 + 0.018 * (side / 0.26) * (side / 0.26);
+        let below = steepest(|at| corner_hold(at, facing, side, 1.0), (line, line + 0.15));
+        let above = steepest(|at| corner_hold(at, facing, side, 1.0), (line - 0.15, line));
+        println!(
+            "the corner field lets go at up to {below:.1} per span below the line and {above:.1} \
+             above it"
+        );
+        assert!(
+            below < 15.0,
+            "the corner field falls at {below:.1} per span under the line - the skin under the \
+             corner goes from held to dropping in a crease"
+        );
+        // And at the line itself the two sides agree, which is what moves the
+        // seam's two edges as one thing under a smile (#216).
+        let at_line = corner_hold(line, facing, side, 1.0);
+        assert!(
+            (at_line - corner_hold(line - 0.001, facing, side, 1.0)).abs() < 1e-4
+                && (at_line - corner_hold(line + 0.001, facing, side, 1.0)).abs() < 1e-4,
+            "the corner field is not flat across the mouth line"
+        );
+    }
+
+    #[test]
+    fn the_jaws_top_edge_is_soft_past_the_commissure() {
+        // #498's crease beside each corner. Inside the slit the mandible
+        // field's top edge stays narrow - 0.015 of the span, the #154 shear
+        // contract under a seam that moves outright - but past the
+        // commissure it is cheek, and keyed to `facing` alone the narrow edge
+        // ran out to side 0.39: beside the corners the skin went from no jaw
+        // to all of it in 2.5 mm, rising at 100 per span. Read on the default
+        // slit (scale 1.0) at side 0.08, inside it, and at 0.25, just past
+        // its weld at 0.224, and on the widest mouth's own slit (scale 0.61)
+        // past its weld at 0.37.
+        let rise = |side: f32, scale: f32| {
+            let facing = (1.0 - side * side).sqrt();
+            steepest(|at| mandible_hold(at, facing, side, scale), (0.30, 0.50))
+        };
+        let (inside, beside, wide) = (rise(0.08, 1.0), rise(0.25, 1.0), rise(0.40, 0.61));
+        println!(
+            "the jaw's top edge rises at {inside:.0} per span inside the slit, {beside:.0} beside \
+             the default's corner, {wide:.0} beside the widest mouth's"
+        );
+        assert!(
+            inside > 80.0,
+            "the jaw's top edge rises at only {inside:.0} per span inside the slit - #154's narrow \
+             edge under the seam is gone"
+        );
+        assert!(
+            beside < 40.0 && wide < 40.0,
+            "the jaw's top edge rises at {beside:.0} per span beside the default's corner and \
+             {wide:.0} beside the widest mouth's - a crease running out from each corner"
+        );
     }
 }
 
@@ -4915,7 +5219,12 @@ fn chin_of(mesh: &PolyMesh, rig: &Rig, head: usize, throat: f32) -> Option<f32> 
     // whatever else it is. The throat still binds when it is the higher of the
     // two, which is every body that has not been given a nape to trip over.
     let basement = onto(pushed().fold(f32::MAX, |low, knot| low.min(knot.0)));
-    menton(mesh, centre, throat.max(basement), ceiling)
+    let extents = mesh.face_extents();
+    menton(
+        |y| midline(mesh, &extents, centre, y),
+        throat.max(basement),
+        ceiling,
+    )
 }
 
 /// How far the midline surface reaches forward at `y` above the head joint.
@@ -4923,9 +5232,20 @@ fn chin_of(mesh: &PolyMesh, rig: &Rig, head: usize, throat: f32) -> Option<f32> 
 /// `None` where the midline is not inside the mesh at all, which is what the
 /// throat does at the bottom of the scan and what a head with no surface there
 /// does everywhere. Bisected against [`PolyMesh::contains`], the same primitive
-/// the rest of the crate judges a surface with.
-fn midline(mesh: &PolyMesh, centre: Vec3, y: f32) -> Option<f32> {
-    let inside = |z: f32| mesh.contains(Vec3::new(centre.x, centre.y + y, centre.z + z));
+/// the rest of the crate judges a surface with. `extents` is the mesh's
+/// [`PolyMesh::face_extents`], taken once for every height a scan reads.
+///
+/// **Through a column, and to the bit what `contains` answers** (#89). All 25
+/// points of a bisection share their `x` and `y`, so the faces those two rule
+/// out are ruled out once ([`PolyMesh::column`]) rather than 25 times over the
+/// whole body. Asked point by point, this was 70% of [`Skull::measure`]
+/// (11.6 of 16.5 ms a call, over five bodies), and the column agrees with
+/// `contains` by construction: it runs `contains`'s own tests, through the
+/// same functions, on every face `contains` would test.
+/// `the_midline_column_reads_what_contains_reads` holds the two together.
+fn midline(mesh: &PolyMesh, extents: &[(Vec3, Vec3)], centre: Vec3, y: f32) -> Option<f32> {
+    let column = mesh.column(extents, centre.x, centre.y + y);
+    let inside = |z: f32| column.contains(centre.z + z);
     if !inside(0.0) {
         return None;
     }
@@ -5002,7 +5322,9 @@ const FLAT: f32 = 0.0001;
 /// of its own maximum. That is the saturated case and it is reported as no
 /// answer rather than as the top of the scan, which is precisely the reading
 /// error that makes a bounded figure out of an unbounded one.
-fn menton(mesh: &PolyMesh, centre: Vec3, throat: f32, ceiling: f32) -> Option<f32> {
+///
+/// `reach` is the midline profile, [`midline`] at a height above the joint.
+fn menton(reach: impl Fn(f32) -> Option<f32>, throat: f32, ceiling: f32) -> Option<f32> {
     /// How finely, in metres. Half the finest cell the face ever carries.
     const STEP: f32 = 0.0009;
     /// How coarsely the crest is bracketed first, in metres. Four fine steps,
@@ -5017,7 +5339,7 @@ fn menton(mesh: &PolyMesh, centre: Vec3, throat: f32, ceiling: f32) -> Option<f3
         let (mut top, mut lo, mut hi, mut fell) = (f32::MIN, from, from, false);
         let mut y = from;
         while y <= to {
-            if let Some(at) = midline(mesh, centre, y) {
+            if let Some(at) = reach(y) {
                 if at > top + FLAT {
                     (top, lo, hi) = (at, y, y);
                 } else if at >= top - FLAT {

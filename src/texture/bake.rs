@@ -77,13 +77,42 @@ pub struct Texel {
 #[derive(Clone, Copy, Debug, Default, PartialEq)]
 pub(crate) struct Footprint {
     /// The ellipse's two semi-axes on the skin, in metres, the longer first: at
-    /// right angles to each other and to the texel's normal. Both zero where
-    /// nothing measured it, which is everywhere off the head: see
-    /// [`bake_measured`].
+    /// right angles to each other and to the texel's normal. Nothing measures
+    /// one off the head's own skin: see [`bake_measured`] and
+    /// [`Footprints::get`].
     pub(crate) axes: [Vec3; 2],
 }
 
 impl Footprint {
+    /// The ellipse a stretch tensor - see [`spreads`] - draws in the tangent
+    /// plane of `normal`: [`Ellipse::of`] laid back onto the skin.
+    #[cfg(test)]
+    fn of(spread: Mat3, normal: Vec3) -> Self {
+        Ellipse::of(spread, normal).on(normal)
+    }
+}
+
+/// A [`Footprint`] as [`Footprints`] keeps it (#477): its two semi-axes'
+/// lengths and the major axis's direction, in the tangent frame
+/// `Vec3::any_orthonormal_pair` gives the texel's own normal. 16 bytes where
+/// the two axes laid out in body space are 24.
+///
+/// **The frame is not stored because the texel already holds it**: every
+/// footprint is measured at its texel's own normal, the one the bake writes
+/// into the [`Texel`] beside it, and a reader laying it back onto the skin
+/// with that normal - [`Footprints::get`], through [`Ellipse::on`] - repeats
+/// the arithmetic that laid the two axes out in body space when they were
+/// kept so, in its own order, and reads the same bits: every person's skin
+/// map, rolled and at the budget sweep's corners, is the same to the byte.
+#[derive(Clone, Copy, Debug, Default, PartialEq)]
+struct Ellipse {
+    /// The major and the minor semi-axis's lengths, in metres.
+    lengths: [f32; 2],
+    /// The major axis's unit direction, in the normal's tangent frame.
+    turn: Vec2,
+}
+
+impl Ellipse {
     /// The ellipse a stretch tensor - see [`spreads`] - draws in the tangent
     /// plane of `normal`.
     ///
@@ -96,26 +125,32 @@ impl Footprint {
             two.dot(spread * two),
         );
         let ([big, small], turn) = principal(a, b, c);
+        Self {
+            lengths: [big.sqrt(), small.sqrt()],
+            turn,
+        }
+    }
+
+    /// The footprint this is on the skin at `normal`, which must be the
+    /// normal it was measured at.
+    fn on(self, normal: Vec3) -> Footprint {
+        let (one, two) = normal.any_orthonormal_pair();
+        let turn = self.turn;
         let major = one * turn.x + two * turn.y;
         let minor = one * -turn.y + two * turn.x;
-        Self {
-            axes: [major * big.sqrt(), minor * small.sqrt()],
+        Footprint {
+            axes: [major * self.lengths[0], minor * self.lengths[1]],
         }
     }
 }
-
-/// Nothing measured: what [`Footprints`] reads off the head.
-const NOTHING: Footprint = Footprint {
-    axes: [Vec3::ZERO; 2],
-};
 
 /// The side of one tile of [`Footprints`], in texels.
 const TILE: usize = 16;
 
 /// The [`Footprint`]s of one bake, addressed by the index of a texel in
-/// [`AtlasGeometry::texels`], **kept for the head only** (#432), and which of
-/// the head's texels an attached part drew rather than the head's own skin
-/// (#471).
+/// [`AtlasGeometry::texels`], **kept for the head's own skin only** (#432,
+/// #477), and which of the head's texels an attached part drew rather than
+/// the head's own skin (#471).
 ///
 /// Only the head's texels are ever measured, so one footprint for every texel
 /// of the atlas was 24 MB at 1024 texels of which all but the head read
@@ -123,8 +158,35 @@ const TILE: usize = 16;
 /// linear memory never shrinks back. The head's charts lie all over the
 /// atlas, so not even a grid over their bounds is small: the atlas is cut into
 /// tiles of [`TILE`] texels a side, and a tile is only kept once a footprint is
-/// written into it. A texel in a tile never written reads
-/// [`Footprint::default`], as it did, and the head's own skin.
+/// written into it. A texel in a tile never written reads no footprint.
+///
+/// **What it costs, and why it is this small** (#477). Measured at 0.24.7 on
+/// real builds, the tiles kept ran far past what the default body's head
+/// alone keeps: persons to 893 tiles of 6 KB, 5.5 MB, at the budget sweep's
+/// dear corners (seed 2 lean, thin and tall, its head long and broad, 196,000
+/// of its texels the head's); winged bodies to 2,291, 14 MB, and beasts to
+/// 1,511, 9 MB. Three things kept them:
+///
+/// - **Bodies nobody reads them on.** A beast's coat and a winged body's
+///   plumage or coat are painted without them, but the bake measured their
+///   heads anyway - and a creature's head is a large share of its atlas: on
+///   winged roll 14 half the atlas, 543,000 texels, 276,000 of them its own
+///   head's skin and 267,000 its ears, jaw and lids. They are no longer
+///   measured: see [`bake`] and [`bake_measured`].
+/// - **The parts' footprints.** A part's texel takes no painted hair, so
+///   nothing reads its footprint, only the bit saying it is a part's: a
+///   person's ears, nose and lids kept 112 tiles of footprints for their bits
+///   alone at the dearest corner. Their bits are kept in tiles of their own,
+///   32 bytes each.
+/// - **24 bytes a texel**, the two axes in body space. Each is kept as an
+///   [`Ellipse`] in the texel's own tangent frame, 16 bytes, read back
+///   bit for bit.
+///
+/// So the dearest person keeps 779 tiles of 4 KB, 3.26 MB with the parts' bits
+/// and the tile tables, inside the owner's ceiling, `CEILING`; at the median
+/// of 160 persons rolled and at the sweep's corners 1.44 MB, where it kept
+/// 2.56; beasts and winged bodies nothing. See
+/// `a_real_body_keeps_its_footprints_under_the_ceiling`.
 ///
 /// **Which texels are a part's** rides here because it is wanted where the
 /// footprints are and nowhere else - on the head, by the painter - and because
@@ -132,24 +194,16 @@ const TILE: usize = 16;
 /// break any crate that writes one out. An ear is hung on the head, so its
 /// texels are the head's [`Zone`]; it lies beside the scalp and the sideburn,
 /// so a painter asking where hair grows by position alone paints both onto it.
-/// One bit a texel, a tile's 256 in four words: 32 bytes a kept tile beside its
-/// 6 KB of footprints.
 #[derive(Clone, Debug, Default, PartialEq)]
 pub(crate) struct Footprints {
     /// The atlas's width and height, in texels.
     atlas: [usize; 2],
-    /// The atlas's tiles, row-major, each once something has been written into
-    /// it.
-    tiles: Vec<Option<Box<Tile>>>,
-}
-
-/// One tile of [`Footprints`], its texels row-major.
-#[derive(Clone, Debug, PartialEq)]
-struct Tile {
-    /// Each texel's footprint.
-    footprints: [Footprint; TILE * TILE],
-    /// Whether an attached part drew each texel, a bit each (#471).
-    parts: [u64; TILE * TILE / 64],
+    /// The atlas's tiles of footprints of the head's own skin, row-major, each
+    /// once something has been written into it; texels row-major in each.
+    skin: Vec<Option<Box<[Ellipse; TILE * TILE]>>>,
+    /// The atlas's tiles of which texels an attached part drew (#471), a bit
+    /// each, row-major, each once a part has drawn into it.
+    parts: Vec<Option<Box<[u64; TILE * TILE / 64]>>>,
 }
 
 impl Footprints {
@@ -159,7 +213,8 @@ impl Footprints {
         let [across, down] = atlas.map(|side| side.div_ceil(TILE));
         Self {
             atlas,
-            tiles: vec![None; across * down],
+            skin: vec![None; across * down],
+            parts: vec![None; across * down],
         }
     }
 
@@ -173,11 +228,22 @@ impl Footprints {
         })
     }
 
-    /// The footprint of texel `index` of the atlas, or `None` in a tile
-    /// nothing was written into.
-    pub(crate) fn get(&self, index: usize) -> Option<&Footprint> {
+    /// The footprint of texel `index` of the atlas, laid onto the skin at
+    /// `normal`, which must be that texel's own [`Texel::normal`]: `None` on
+    /// an attached part's texel and in a tile nothing was written into. A
+    /// texel off the head that shares a kept tile with it reads a footprint
+    /// of zero size, as it always did; the painter reads only head texels.
+    pub(crate) fn get(&self, index: usize, normal: Vec3) -> Option<Footprint> {
+        if self.on_a_part(index) {
+            return None;
+        }
+        self.ellipse(index).map(|ellipse| ellipse.on(normal))
+    }
+
+    /// The ellipse kept for texel `index` of the atlas, if its tile is kept.
+    fn ellipse(&self, index: usize) -> Option<Ellipse> {
         let (tile, at) = self.place(index)?;
-        self.tiles[tile].as_ref().map(|tile| &tile.footprints[at])
+        self.skin[tile].as_ref().map(|tile| tile[at])
     }
 
     /// Whether an attached part - an ear, a lid - drew texel `index` of the
@@ -185,42 +251,86 @@ impl Footprints {
     pub(crate) fn on_a_part(&self, index: usize) -> bool {
         self.place(index)
             .and_then(|(tile, at)| {
-                let tile = self.tiles[tile].as_ref()?;
-                Some((tile.parts[at / 64] >> (at % 64)) & 1 == 1)
+                let bits = self.parts[tile].as_ref()?;
+                Some((bits[at / 64] >> (at % 64)) & 1 == 1)
             })
             .unwrap_or(false)
     }
 
-    /// Writes texel `index` of the atlas: its footprint, and whether a part
-    /// drew it. Its tile is kept from here on.
-    fn write(&mut self, index: usize, footprint: Footprint, part: bool) {
+    /// Writes texel `index` of the atlas as the head's own skin, with its
+    /// footprint. Its tile is kept from here on.
+    fn write_skin(&mut self, index: usize, ellipse: Ellipse) {
         let Some((tile, at)) = self.place(index) else {
             return;
         };
-        let tile = self.tiles[tile].get_or_insert_with(|| {
-            Box::new(Tile {
-                footprints: [NOTHING; TILE * TILE],
-                parts: [0; TILE * TILE / 64],
-            })
-        });
-        tile.footprints[at] = footprint;
-        let bit = 1u64 << (at % 64);
-        if part {
-            tile.parts[at / 64] |= bit;
-        } else {
-            tile.parts[at / 64] &= !bit;
+        self.skin[tile].get_or_insert_with(|| Box::new([Ellipse::default(); TILE * TILE]))[at] =
+            ellipse;
+        if let Some(bits) = self.parts[tile].as_mut() {
+            bits[at / 64] &= !(1u64 << (at % 64));
         }
     }
-}
 
-impl std::ops::Index<usize> for Footprints {
-    type Output = Footprint;
+    /// Marks texel `index` of the atlas as drawn by an attached part, which
+    /// reads no footprint.
+    fn write_part(&mut self, index: usize) {
+        let Some((tile, at)) = self.place(index) else {
+            return;
+        };
+        self.parts[tile].get_or_insert_with(|| Box::new([0; TILE * TILE / 64]))[at / 64] |=
+            1u64 << (at % 64);
+    }
 
-    /// The footprint of texel `index` of the atlas, nothing off the head.
-    fn index(&self, index: usize) -> &Footprint {
-        self.get(index).unwrap_or(&NOTHING)
+    /// The footprint of texel `index` of `geometry`, the bake these were
+    /// measured with: [`Footprint::default`] wherever [`Self::get`] reads
+    /// none.
+    #[cfg(test)]
+    pub(crate) fn read(&self, geometry: &AtlasGeometry, index: usize) -> Footprint {
+        geometry
+            .texels
+            .get(index)
+            .copied()
+            .flatten()
+            .and_then(|texel| self.get(index, texel.normal))
+            .unwrap_or_default()
+    }
+
+    /// What these footprints hold on the heap, in bytes: every kept tile and
+    /// the two tables of them.
+    #[cfg(test)]
+    pub(crate) fn bytes(&self) -> usize {
+        use std::mem::size_of;
+        self.skin.iter().flatten().count() * size_of::<[Ellipse; TILE * TILE]>()
+            + self.parts.iter().flatten().count() * size_of::<[u64; TILE * TILE / 64]>()
+            + self.skin.len() * size_of::<Option<Box<[Ellipse; TILE * TILE]>>>()
+            + self.parts.len() * size_of::<Option<Box<[u64; TILE * TILE / 64]>>>()
     }
 }
+
+/// The most a build's [`Footprints`] may hold, in bytes (#477): 600 of
+/// 0.24.7's tiles of 6 KB and 32 bytes, 3.71 MB.
+///
+/// **The owner's figure, in what it priced** (2026-11-14, raised from 512
+/// tiles to 576): about 0.4 MB more a person's build may keep in the web
+/// worker, spent so that no region of a person's head is charted coarser
+/// than 0.24.5's (`uv::PERSON_HEAD_SHARE`). It was counted in tiles, and a
+/// tile shrank to 4 KB at #477, so it is held in the bytes it was set at
+/// rather than in a count of tiles that no longer weigh what it weighed.
+///
+/// Measured at #477 on real builds (`footprint_tests`): the dearest person,
+/// seed 2 lean, thin and tall at frame -2 with its head long and broad, keeps
+/// 3.26 MB, 779 tiles of its head's skin and 112 of its parts' bits; the
+/// default body's bare head 2.2 MB. Beasts and winged bodies keep nothing.
+///
+/// **576 -> 600 at milestone #16's Round B** (2026-11-22, under the owner's
+/// standing word that a budget only slightly exceeded may be raised within
+/// reason). The round re-meshed the face (#189) and moved the parting
+/// (#494), and the head's charts re-flattened with them: the same body keeps
+/// 3,620,128 bytes, 1.8 percent past 576 tiles' 3,557,376, and 3,566,752 to
+/// 3,599,840 under the gate's four libm nudges. A face's texel area swings
+/// that much on small edits (#496). 600 tiles clear every reading by 2
+/// percent or more, for 0.15 MB more a build than the owner's 576.
+#[cfg(test)]
+const CEILING: usize = 600 * (TILE * TILE * 24 + TILE * TILE / 8);
 
 /// The two eigenvalues of the symmetric 2 x 2 `[[a, b], [b, c]]`, the larger
 /// first and neither below zero, and the unit direction of the larger.
@@ -317,7 +427,7 @@ pub fn bake(
     mouth: &[f32],
     size: u32,
 ) -> AtlasGeometry {
-    bake_measured(mesh, uv, parts, mouth, size).0
+    baked(mesh, uv, parts, mouth, size, false).0
 }
 
 /// [`bake`], and how much skin each texel spans beside it: one [`Footprint`] a
@@ -325,12 +435,18 @@ pub fn bake(
 /// triangle and out into the gutters with the texel it belongs to (#432), and
 /// whether an attached part drew it (#471).
 ///
-/// **The head's texels only**, the one part of the body anything is feathered
-/// on (the painted beard); every other texel's footprint is left at nothing.
+/// **The head's own skin only**, the one part of the body anything is
+/// feathered on (the painted beard) or reads a footprint's grain on (the
+/// painted scalp, #473's second fixer); every other texel reads no footprint.
 /// Read over the whole atlas it cost a fifth of the bake again, about twenty
 /// milliseconds a body at 1024 texels, persons and beasts alike; and stored
 /// over the whole atlas it cost 24 MB there, which [`Footprints`] keeps to the
 /// head's corner.
+///
+/// **For a body painted with a skin only** (#477): a beast's coat and a winged
+/// body's plumage or coat read no footprint, and their heads, a large share of
+/// their atlases, kept up to 14 MB of them for nothing. Those bake with
+/// [`bake`], which measures nothing, and is the same bake to the bit.
 pub(crate) fn bake_measured(
     mesh: &PolyMesh,
     uv: &UvUnwrap,
@@ -338,37 +454,72 @@ pub(crate) fn bake_measured(
     mouth: &[f32],
     size: u32,
 ) -> (AtlasGeometry, Footprints) {
+    let (geometry, measured) = baked(mesh, uv, parts, mouth, size, true);
+    (geometry, measured.unwrap_or_default())
+}
+
+/// [`bake`], and its [`Footprints`] if it should `measure` them.
+fn baked(
+    mesh: &PolyMesh,
+    uv: &UvUnwrap,
+    parts: &[(&PolyMesh, Zone, &[f32])],
+    mouth: &[f32],
+    size: u32,
+    measure: bool,
+) -> (AtlasGeometry, Option<Footprints>) {
     if size == 0 || (uv.faces.is_empty() && parts.is_empty()) {
-        return (AtlasGeometry::default(), Footprints::default());
+        return (AtlasGeometry::default(), None);
     }
-    let (mut geometry, mut measured) = draw(mesh, uv, parts, mouth, size);
-    dilate(&mut geometry, &mut measured, DILATION);
+    let (mut geometry, mut measured) = draw(mesh, uv, parts, mouth, size, measure);
+    dilate(&mut geometry, measured.as_mut(), DILATION);
+    #[cfg(test)]
+    KEPT.with(|kept| {
+        let now = measured.as_ref().map_or(0, Footprints::bytes);
+        kept.set(Some(kept.get().map_or(now, |was| was.max(now))));
+    });
     (geometry, measured)
 }
 
-/// [`bake_measured`] before its gutters are dilated: every texel a triangle
-/// covers or touches, and nothing else.
+#[cfg(test)]
+thread_local! {
+    /// The most any bake on this thread has kept in its [`Footprints`], in
+    /// bytes, since [`kept_since`] last read it; `None` if nothing baked. How
+    /// a test reads what a real build keeps (#477): the build drops them
+    /// before it hands back its avatar.
+    static KEPT: std::cell::Cell<Option<usize>> = const { std::cell::Cell::new(None) };
+}
+
+/// What the bakes on this thread kept in their [`Footprints`] since this was
+/// last asked, the most of them, in bytes: see [`KEPT`].
+#[cfg(test)]
+pub(crate) fn kept_since() -> Option<usize> {
+    KEPT.with(std::cell::Cell::take)
+}
+
+/// [`baked`] before its gutters are dilated: every texel a triangle covers or
+/// touches, and nothing else.
 fn draw(
     mesh: &PolyMesh,
     uv: &UvUnwrap,
     parts: &[(&PolyMesh, Zone, &[f32])],
     mouth: &[f32],
     size: u32,
-) -> (AtlasGeometry, Footprints) {
+    measure: bool,
+) -> (AtlasGeometry, Option<Footprints>) {
     let mut geometry = AtlasGeometry {
         width: size,
         height: size,
         texels: vec![None; (size * size) as usize],
     };
-    let mut measured = Footprints::over(size, size);
+    let mut measured = measure.then(|| Footprints::over(size, size));
     // How far outside the triangle that filled it each texel lies (#472): see
     // `rasterize`. One byte a texel, 1 MB at 1024 texels, dropped before the
     // gutters are dilated, which clone every texel at 36 bytes each.
     let mut ranks = vec![u8::MAX; (size * size) as usize];
-    triangles(mesh, uv, parts, mouth, size, |drawn, corners| {
+    triangles(mesh, uv, parts, mouth, size, measure, |drawn, corners| {
         rasterize(
             &mut geometry,
-            &mut measured,
+            measured.as_mut(),
             &mut ranks,
             drawn.zone,
             drawn.part,
@@ -389,13 +540,16 @@ struct Drawn {
 
 /// Hands every triangle of the body's charts, and then of each attached part,
 /// to `visit`, in the order the bake draws them, fanned from each face's first
-/// corner and carrying everything [`rasterize`] reads at its corners.
+/// corner and carrying everything [`rasterize`] reads at its corners - the
+/// stretch tensors of [`spreads`] only if it should `measure`, and nothing
+/// where it should not.
 fn triangles(
     mesh: &PolyMesh,
     uv: &UvUnwrap,
     parts: &[(&PolyMesh, Zone, &[f32])],
     mouth: &[f32],
     size: u32,
+    measure: bool,
     mut visit: impl FnMut(Drawn, &Corners),
 ) {
     if !uv.faces.is_empty() {
@@ -411,14 +565,18 @@ fn triangles(
         };
         // Read per body vertex, over every chart face it touches on every side
         // of its seams, and only then split, so that both sides agree.
-        let spreads = uv.gather(&spreads(
-            &uv.uvs,
-            &positions,
-            &uv.faces,
-            |vertex| uv.source[vertex as usize] as usize,
-            mesh.vertex_count(),
-            size,
-        ));
+        let spreads = if measure {
+            uv.gather(&spreads(
+                &uv.uvs,
+                &positions,
+                &uv.faces,
+                |vertex| uv.source[vertex as usize] as usize,
+                mesh.vertex_count(),
+                size,
+            ))
+        } else {
+            vec![Mat3::ZERO; uv.uvs.len()]
+        };
         for (index, face) in uv.faces.iter().enumerate() {
             let drawn = Drawn {
                 zone: uv.charts[uv.chart_of_face[index] as usize].zone,
@@ -445,13 +603,20 @@ fn triangles(
 
     for &(part, zone, mouth) in parts {
         let drawn = Drawn { zone, part: true };
-        part_triangles(part, mouth, size, |corners| visit(drawn, corners));
+        part_triangles(part, mouth, size, measure, |corners| visit(drawn, corners));
     }
 }
 
 /// Hands every triangle of one attached part to `visit`, using the
-/// coordinates it carries and its mouth channel, if it has one.
-fn part_triangles(part: &PolyMesh, mouth: &[f32], size: u32, mut visit: impl FnMut(&Corners)) {
+/// coordinates it carries and its mouth channel, if it has one, and its
+/// stretch tensors if it should `measure`.
+fn part_triangles(
+    part: &PolyMesh,
+    mouth: &[f32],
+    size: u32,
+    measure: bool,
+    mut visit: impl FnMut(&Corners),
+) {
     if part.uvs.len() != part.positions.len() {
         return;
     }
@@ -464,14 +629,18 @@ fn part_triangles(part: &PolyMesh, mouth: &[f32], size: u32, mut visit: impl FnM
             0.0
         }
     };
-    let spreads = spreads(
-        &part.uvs,
-        &part.positions,
-        &part.faces,
-        |vertex| vertex as usize,
-        part.positions.len(),
-        size,
-    );
+    let spreads = if measure {
+        spreads(
+            &part.uvs,
+            &part.positions,
+            &part.faces,
+            |vertex| vertex as usize,
+            part.positions.len(),
+            size,
+        )
+    } else {
+        vec![Mat3::ZERO; part.positions.len()]
+    };
     for face in &part.faces {
         for corner in 1..face.len().saturating_sub(1) {
             let triangle = [face[0], face[corner], face[corner + 1]];
@@ -500,7 +669,7 @@ fn part_triangles(part: &PolyMesh, mouth: &[f32], size: u32, mut visit: impl FnM
 ///   whichever way a chart is turned or mirrored, so faces from the two charts
 ///   either side of a seam average to one reading, where averaging two charts'
 ///   steps would add a step along one chart's rows to a step along the other's
-///   columns. [`Footprint::of`] reads the ellipse back out of it.
+///   columns. [`Ellipse::of`] reads the ellipse back out of it.
 /// - **Averaged by skin, not by texels**, because where a chart is coarse its
 ///   faces are thin in the atlas: under the jaw most of the skin lies in faces
 ///   the projection has flattened to a fraction of a texel, and weighed by the
@@ -633,8 +802,9 @@ struct Corners {
     spreads: [Mat3; 3],
 }
 
-/// Fills every texel a triangle covers or touches - see [`COVER`] - and the
-/// [`Footprint`] beside each, and whether an attached `part` drew it.
+/// Fills every texel a triangle covers or touches - see [`COVER`] - and, where
+/// it is `measured`, the [`Footprint`] beside each of the head's, or that an
+/// attached `part` drew it.
 ///
 /// **A texel outside the triangle takes the triangle's nearest point** (#472):
 /// what the body is at the point of the edge or the corner nearest its
@@ -655,7 +825,7 @@ struct Corners {
 /// be skin from anywhere else on the body.
 fn rasterize(
     geometry: &mut AtlasGeometry,
-    measured: &mut Footprints,
+    mut measured: Option<&mut Footprints>,
     ranks: &mut [u8],
     zone: Zone,
     part: bool,
@@ -741,15 +911,21 @@ fn rasterize(
                 mouth: mouths[0] * weights.x + mouths[1] * weights.y + mouths[2] * weights.z,
                 zone,
             });
-            if zone == Zone::Head {
-                measured.write(
-                    at,
-                    Footprint::of(
-                        spreads[0] * weights.x + spreads[1] * weights.y + spreads[2] * weights.z,
-                        normal,
-                    ),
-                    part,
-                );
+            if let Some(measured) = measured.as_deref_mut().filter(|_| zone == Zone::Head) {
+                // A part's texel reads no footprint, only that it is a part's.
+                if part {
+                    measured.write_part(at);
+                } else {
+                    measured.write_skin(
+                        at,
+                        Ellipse::of(
+                            spreads[0] * weights.x
+                                + spreads[1] * weights.y
+                                + spreads[2] * weights.z,
+                            normal,
+                        ),
+                    );
+                }
             }
         }
     }
@@ -785,8 +961,8 @@ fn edge(a: Vec2, b: Vec2, c: Vec2) -> f32 {
 }
 
 /// Grows filled texels outward into the gutters, each with its [`Footprint`]
-/// and whether a part drew it.
-fn dilate(geometry: &mut AtlasGeometry, measured: &mut Footprints, passes: u32) {
+/// or that a part drew it, where it is `measured`.
+fn dilate(geometry: &mut AtlasGeometry, mut measured: Option<&mut Footprints>, passes: u32) {
     let (width, height) = (geometry.width as i64, geometry.height as i64);
 
     for _ in 0..passes {
@@ -814,10 +990,16 @@ fn dilate(geometry: &mut AtlasGeometry, measured: &mut Footprints, passes: u32) 
                     });
                 if let Some((texel, there)) = found {
                     geometry.texels[here] = Some(texel);
-                    // Filled before this pass, so already what it ends as.
-                    if let Some(&footprint) = measured.get(there) {
-                        let part = measured.on_a_part(there);
-                        measured.write(here, footprint, part);
+                    // Filled before this pass, so already what it ends as. The
+                    // head's texels only: nothing reads one elsewhere.
+                    if let Some(measured) =
+                        measured.as_deref_mut().filter(|_| texel.zone == Zone::Head)
+                    {
+                        if measured.on_a_part(there) {
+                            measured.write_part(here);
+                        } else if let Some(ellipse) = measured.ellipse(there) {
+                            measured.write_skin(here, ellipse);
+                        }
                     }
                     grew = true;
                 }
@@ -829,6 +1011,10 @@ fn dilate(geometry: &mut AtlasGeometry, measured: &mut Footprints, passes: u32) 
         }
     }
 }
+
+#[cfg(test)]
+#[path = "footprint_tests.rs"]
+mod footprint_tests;
 
 #[cfg(test)]
 #[path = "stray_tests.rs"]
@@ -920,7 +1106,7 @@ mod tests {
                 let triangle = [face[0], face[corner], face[corner + 1]];
                 rasterize(
                     &mut bare,
-                    &mut measured,
+                    Some(&mut measured),
                     &mut vec![u8::MAX; 128 * 128],
                     zone,
                     false,
@@ -936,7 +1122,7 @@ mod tests {
             }
         }
         let before = bare.coverage();
-        dilate(&mut bare, &mut measured, DILATION);
+        dilate(&mut bare, Some(&mut measured), DILATION);
         assert!(
             bare.coverage() > before,
             "dilation must grow coverage past {before:.3}"
@@ -979,18 +1165,16 @@ mod tests {
         // bytes a tile beside them; 438 on #473's two charts of the head, with
         // #474's denser packing, and 446 to 474 under a nudge of libm; 452 on
         // its fixer's three, the face, the crown and the band round the back,
-        // and 460 to 484 under a nudge.
-        //
-        // **The ceiling is the owner's: 576 tiles, nine sixty-fourths of the
-        // atlas** (2026-11-14, raised from an eighth, 512): about 0.4 MB more
-        // a person's build may keep in the web worker, spent so that no region
-        // of a person's head is charted coarser than 0.24.5's (`uv::PERSON_HEAD_SHARE`).
-        // 526 on #473's second fixer's charts, and 517 to 543 under a nudge.
-        let kept = measured.tiles.iter().flatten().count();
+        // and 460 to 484 under a nudge; 526 on its second fixer's charts, and
+        // 517 to 543 under a nudge, 3.2 MB at 6 KB a tile. Since #477 a tile
+        // is 4 KB: see [`CEILING`] for the owner's ceiling, and
+        // `a_real_body_keeps_its_footprints_under_the_ceiling` for the bodies
+        // that come near it, which this bare one, with no face, does not.
+        let kept = measured.bytes();
+        println!("the default body's bare head keeps {kept} bytes of footprints");
         assert!(
-            kept * 64 <= measured.tiles.len() * 9,
-            "the footprints keep {kept} of {} tiles",
-            measured.tiles.len()
+            kept <= CEILING,
+            "the footprints keep {kept} bytes, past the {CEILING} of the ceiling"
         );
         assert_eq!(
             geometry,
@@ -1015,10 +1199,10 @@ mod tests {
             let (mut steps, mut long) = (Vec::new(), (Vec::new(), Vec::new()));
             for (at, texel) in geometry.texels.iter().enumerate() {
                 let Some(here) = texel else { continue };
-                let [major, minor] = measured[at].axes;
+                let [major, minor] = measured.read(geometry, at).axes;
                 if here.zone != Zone::Head {
                     assert_eq!(
-                        measured[at],
+                        measured.read(geometry, at),
                         Footprint::default(),
                         "a footprint off the head at {:?}",
                         here.position
@@ -1046,7 +1230,7 @@ mod tests {
                     (here.zone == there.zone
                         && here.normal.dot(there.normal) >= 0.9
                         && step.length() >= 1e-6)
-                        .then(|| (step.length(), reading(&measured[at], step)))
+                        .then(|| (step.length(), reading(&measured.read(geometry, at), step)))
                         .filter(|&(_, read)| read < 3.0)
                 });
                 for &(_, read) in both.iter().flatten() {
@@ -1158,12 +1342,15 @@ mod tests {
                         continue;
                     }
                     twins += 1;
-                    let gap = tensor(&measured[mine]) - tensor(&measured[theirs]);
+                    let gap = tensor(&measured.read(&geometry, mine))
+                        - tensor(&measured.read(&geometry, theirs));
                     let frobenius = (gap.x_axis.length_squared()
                         + gap.y_axis.length_squared()
                         + gap.z_axis.length_squared())
                     .sqrt();
-                    let scale = measured[mine].axes[0].length_squared().max(1e-12);
+                    let scale = measured.read(&geometry, mine).axes[0]
+                        .length_squared()
+                        .max(1e-12);
                     worst = worst.max(frobenius / scale);
                 }
             }

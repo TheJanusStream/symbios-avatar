@@ -216,7 +216,10 @@ pub use wing::{Drive, Gaits, Kinship, Stroke, WingParts, WingSide, Wings};
 ///   renders as a single displaced row of vertices, which is a bar. The mouth
 ///   band needs its cells under half the narrowest term, and the cage's ring
 ///   spacing under the face (set by the head's length below its joint) is what
-///   these two passes are correcting for.
+///   these two passes are correcting for. The second halves its band DOWN
+///   only (#189): the terms are narrow in height, and quartering paid 5,042
+///   triangles on the default body for an across cell they did not need. The
+///   lip band's own pass halves DOWN as well, for the same reason.
 /// * **The sixth and seventh are the jaw flank, and they are the cheapest
 ///   passes here by an order of magnitude.** Every pass above reaches from
 ///   dead ahead round to a cosine, so widening one to take in the angle of the
@@ -246,9 +249,12 @@ const FACE_REFINEMENT: usize = 10;
 /// One, and it is argued from a measurement on [`torso::refine_chest`]'s own
 /// table rather than here: it lifts the two-sided bound #271 stated, taking the
 /// relief a paired shape needs before a section shows two sides from 30–40 mm
-/// down under 25 — which is a male pectoral's own range. It costs 1,144
-/// triangles on a dressed body against 514 of skin, because a refined trunk is
-/// a refined GARMENT too.
+/// down under 25 — which is a male pectoral's own range. It cost 1,144
+/// triangles on a dressed body when it landed, against 514 of skin, because
+/// a refined trunk is a refined GARMENT too - on both of its shells, until #493
+/// built the inner wall without it wherever the skin over it is hidden
+/// (`Garment::thin_inner`): measured on the default body, the pass costs 610
+/// dressed now, where it cost 1,138 just before.
 ///
 /// A second, tighter pass over the lower half of the lobe was costed at #285,
 /// refused for the budget, and retaken at #292 with its own render in hand and
@@ -292,7 +298,7 @@ pub fn build_body(
     subdivisions: usize,
     traits: &face::HeadTraits,
 ) -> Result<PolyMesh, CageError> {
-    build_body_pushed(skeleton, config, subdivisions, traits).map(|(mesh, _)| mesh)
+    build_body_pushed(skeleton, config, subdivisions, traits).map(|(mesh, _, _)| mesh)
 }
 
 /// [`build_body`], handing back how far the cage's hip pass
@@ -305,14 +311,20 @@ pub fn build_body(
 /// refinements after it only append vertices and move none, and the shaping
 /// passes work on the head, the neck and the feet, so the first vertices keep
 /// their indices and the pushes still describe them.
+///
+/// And how many vertices the subdivision made, which is the same fact read
+/// the other way: every vertex past that count was appended by a refinement
+/// pass, which is what lets a garment's inner wall undo those passes and no
+/// more (`Garment::thin_inner`, #493).
 pub(crate) fn build_body_pushed(
     skeleton: &Skeleton,
     config: &CageConfig,
     subdivisions: usize,
     traits: &face::HeadTraits,
-) -> Result<(PolyMesh, Vec<Vec3>), CageError> {
+) -> Result<(PolyMesh, Vec<Vec3>, usize), CageError> {
     let (cage, pushed) = cage::build_cage_pushed(skeleton, config)?;
     let mut mesh = catmull_clark(&cage, subdivisions);
+    let subdivided = mesh.vertex_count();
     let pushed = if pushed.iter().any(|push| *push != Vec3::ZERO) {
         let mut field = cage.clone();
         field.positions = pushed;
@@ -366,7 +378,7 @@ pub(crate) fn build_body_pushed(
         // scales height about the ground the sole already stands on.
         extremity::foot::shape(&mut mesh, &rig);
     }
-    Ok((mesh, pushed))
+    Ok((mesh, pushed, subdivided))
 }
 pub use texture::{AtlasGeometry, Condition, SkinParams, bake_geometry, paint_skin};
 pub use uv::{Chart, UvConfig, UvUnwrap, unwrap};

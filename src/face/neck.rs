@@ -68,8 +68,8 @@ const NECK_SKULL: f32 = 0.72;
 ///
 /// [`NECK_SKULL`] is a fraction of the SURFACE's width and this converts it to
 /// the rig's, so the target costs nothing to compute: measuring the built skull
-/// would mean a second `Skull::measure`, which is 61% of a geometry build on
-/// its own.
+/// would mean another `Skull::measure`, about 4.5 ms of a build on its own
+/// (#89).
 ///
 /// **Measured rather than assumed, and it is stable because the head's carve is
 /// a set of factors on its own node.** Over a grid of `head_size`, `mass` and
